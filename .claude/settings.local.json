@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm -v)",
+      "PowerShell(node -v)",
+      "PowerShell(npm -v)",
+      "PowerShell(Get-Command winget -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command choco -ErrorAction SilentlyContinue)",
+      "Bash(sleep 3 && cat /tmp/spinsheet-dev.log 2>/dev/null || cat \"/c/Users/halbe/Desktop/Hippity/nohup.out\" 2>/dev/null *)",
+      "Bash(powershell -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match '\\\\''next dev'\\\\'' } | Select-Object ProcessId, CommandLine')",
+      "Bash(powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess\")",
+      "Bash(powershell -NoProfile -Command \"Stop-Process -Id 48156,48268 -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue\")",
+      "Bash(powershell -NoProfile -Command '$c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { '\\\\''still running'\\\\'' } else { '\\\\''stopped'\\\\'' }')",
+      "Bash(ls -la \"/c/Program Files/nodejs/npm.cmd\" \"/c/Program Files/nodejs/npm\" 2>&1)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "Bash(powershell -NoProfile -Command '$c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess } else { '\\\\''none'\\\\'' }')",
+      "Bash(powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\\\"ProcessId=51808\\\\\" | Select-Object ProcessId, ParentProcessId, CommandLine | Format-List\")",
+      "Bash(curl -s -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=The Dark Side of the Moon\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=5\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=OK Computer\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=3\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=To Pimp a Butterfly\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=3\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=Blue's Clues\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=3\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=Abbey Road \\(Remastered\\)\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=5\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=Sound & Color\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=5\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=Random Access Memories \\(Drumless\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=5\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -o /tmp/resp.json -w \"HTTP_STATUS:%{http_code}\\\\n\" -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=Abbey Road \\(Remastered\\)\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=5\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Bash(curl -s -o /tmp/resp2.json -w \"HTTP_STATUS:%{http_code}\\\\n\" -G \"https://musicbrainz.org/ws/2/release-group/\" --data-urlencode \"query=Test Query Two\" --data-urlencode \"fmt=json\" --data-urlencode \"limit=5\" -H \"User-Agent: Spinsheet/0.1.0 \\( test@example.com \\)\")",
+      "Read(//tmp/**)",
+      "Bash(powershell -Command \"Stop-Process -Id 112384 -Force\")",
+      "Bash(npm install *)",
+      "Bash(npx eslint *)",
+      "Bash(npx tsc *)",
+      "Bash(powershell -Command \"Stop-Process -Id 110904 -Force\")"
+    ]
+  }
+}

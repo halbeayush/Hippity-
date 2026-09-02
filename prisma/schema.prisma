@@ -1,0 +1,128 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// The app has no login yet — one seeded row (username "me") stands in for
+// the signed-in person, alongside seeded/real friends. See src/lib/currentUser.ts.
+model User {
+  id          Int      @id @default(autoincrement())
+  username    String   @unique
+  displayName String
+  avatarColor String   @default("#71717a")
+  createdAt   DateTime @default(now())
+
+  albums              Album[]
+  activities          Activity[]
+  weeklyTopTracks     WeeklyTopTrack[]
+  sentRequests        Friendship[]         @relation("FriendshipRequester")
+  receivedRequests    Friendship[]         @relation("FriendshipRecipient")
+  recommendationsSent RecommendationSent[] @relation("RecommendationSender")
+  recommendationsGot  RecommendationSent[] @relation("RecommendationRecipient")
+}
+
+// A directed friend request that becomes a mutual friendship once accepted.
+model Friendship {
+  id          Int      @id @default(autoincrement())
+  requesterId Int
+  recipientId Int
+  status      String   @default("pending") // "pending" | "accepted"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  recipient User @relation("FriendshipRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, recipientId])
+}
+
+// One row per album a user has saved, whether it's waiting in the
+// Listen Queue or already rated in the Library. "status" tracks which
+// list it belongs to instead of using two separate tables.
+model Album {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  // An opaque, source-tagged external id, not schema-enforced to be a real
+  // MusicBrainz UUID: albums added via search carry "itunes:<collectionId>"
+  // (see /api/search), while everything discovered through MusicBrainz
+  // directly (New releases, Upcoming, Recommended) keeps its real
+  // release-group UUID. Either way it's just a unique-per-user string here.
+  mbid        String
+  title       String
+  artist      String
+  coverArtUrl String?
+  status      String    @default("queue")
+  rating      Int?
+  note        String?
+  addedAt     DateTime  @default(now())
+  listenedAt  DateTime?
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activities Activity[]
+
+  // Each user can save a given release once; different users can each
+  // save the same release independently.
+  @@unique([userId, mbid])
+}
+
+// A log entry for the Social tab's activity feed, written whenever a user
+// adds an album to their library/to-do or rates one.
+model Activity {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  albumId   Int
+  type      String // "added_library" | "added_todo" | "rated"
+  rating    Int?
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+}
+
+// A user's top-5 tracks for a given week, shown on their Social profile.
+// Local/seeded only for now — not wired up to a real listening-history
+// source yet (see AGENTS.md task notes for future Last.fm/Spotify work).
+model WeeklyTopTrack {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  weekStart   DateTime
+  rank        Int
+  trackName   String
+  artist      String
+  coverArtUrl String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStart, rank])
+}
+
+// An album one friend suggests to another. A sender may have at most 3
+// "pending" rows to a given recipient at once — see MAX_PENDING_PER_FRIEND
+// in src/app/api/social/recommendations/route.ts — and a slot frees up as
+// soon as the recipient resolves it (listened/rejected), not on a timer.
+model RecommendationSent {
+  id          Int       @id @default(autoincrement())
+  senderId    Int
+  recipientId Int
+  // See the comment on Album.mbid — same "itunes:<id>" or real MusicBrainz
+  // UUID, source-tagged, not schema-enforced.
+  mbid        String
+  title       String
+  artist      String
+  coverArtUrl String?
+  status      String    @default("pending") // "pending" | "rejected" | "listened"
+  createdAt   DateTime  @default(now())
+  resolvedAt  DateTime?
+
+  sender    User @relation("RecommendationSender", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient User @relation("RecommendationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+}
