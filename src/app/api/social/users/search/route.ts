@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
   const users = await prisma.user.findMany({
     where: {
       id: { notIn: [...excludedIds] },
-      username: { contains: q },
+      username: { contains: q, mode: "insensitive" },
     },
     select: { id: true, username: true, displayName: true, avatarColor: true },
     take: 10,

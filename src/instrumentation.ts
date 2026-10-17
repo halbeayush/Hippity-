@@ -19,6 +19,9 @@ const WARM_DELAY_MS = 1000;
 
 export function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // On Vercel there's no long-running server on localhost to request, and
+  // each function instance has its own short-lived cache anyway.
+  if (process.env.VERCEL) return;
 
   const origin = `http://localhost:${process.env.PORT ?? 3000}`;
   setTimeout(() => {

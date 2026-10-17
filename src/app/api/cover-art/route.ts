@@ -4,6 +4,7 @@ import path from "path";
 import { NextRequest, NextResponse } from "next/server";
 import { findITunesArtworkSource } from "@/lib/itunes";
 import { getAlbumInfo } from "@/lib/lastfm";
+import { CACHE_ROOT } from "@/lib/persistentCache";
 
 // Cover Art Archive (and the Internet Archive mirrors it redirects to) can
 // be slow to respond and is occasionally briefly down, which every album
@@ -31,7 +32,7 @@ function isAllowedHost(hostname: string): boolean {
     ALLOWED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
   );
 }
-const CACHE_DIR = path.join(process.cwd(), ".cache", "cover-art");
+const CACHE_DIR = path.join(CACHE_ROOT, "cover-art");
 const USER_AGENT = "Spinsheet/0.1.0 ( halbeayush2@gmail.com )";
 const MAX_REDIRECTS = 5;
 
@@ -81,11 +82,16 @@ async function writeToCache(
   contentType: string,
 ): Promise<void> {
   const { dataPath, metaPath } = cachePaths(src);
-  await mkdir(CACHE_DIR, { recursive: true });
-  await Promise.all([
-    writeFile(dataPath, data),
-    writeFile(metaPath, JSON.stringify({ contentType })),
-  ]);
+  try {
+    await mkdir(CACHE_DIR, { recursive: true });
+    await Promise.all([
+      writeFile(dataPath, data),
+      writeFile(metaPath, JSON.stringify({ contentType })),
+    ]);
+  } catch {
+    // Best effort — a full or read-only disk just means the next request
+    // fetches the image again, not that this one fails.
+  }
 }
 
 // Cover Art Archive's redirect chain (itself -> archive.org -> a specific

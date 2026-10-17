@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
+import os from "os";
 import path from "path";
 
 // Keeps a route's last good result on disk (next to the cover-art cache),
@@ -7,7 +8,15 @@ import path from "path";
 // full scrape, or getting nothing if that scrape is rate-limited. Read and
 // write failures are swallowed: this only ever makes a cold start faster,
 // never a reason for a request to fail.
-const CACHE_DIR = path.join(process.cwd(), ".cache", "routes");
+//
+// On Vercel the deployment's own directory is read-only and only /tmp is
+// writable, so the caches live there instead — per server instance and
+// cleared whenever an instance is recycled, so they only help while an
+// instance stays warm.
+export const CACHE_ROOT = process.env.VERCEL
+  ? path.join(os.tmpdir(), "spinsheet-cache")
+  : path.join(process.cwd(), ".cache");
+const CACHE_DIR = path.join(CACHE_ROOT, "routes");
 
 export type Persisted<T> = { at: number; value: T };
 
