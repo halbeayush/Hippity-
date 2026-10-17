@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mapWithConcurrency } from "@/lib/concurrency";
-import { findITunesArtwork } from "@/lib/itunes";
+import { lazyArtworkUrl } from "@/lib/itunes";
 import { getArtistListeners } from "@/lib/lastfm";
 import {
-  coverArtArchiveUrl,
+  coverArtArchiveSrc,
   searchReleaseGroupsInDateWindow,
   type ReleaseGroupSearchHit,
 } from "@/lib/musicbrainz";
+import { readPersisted, writePersisted } from "@/lib/persistentCache";
 import type { HomeAlbum } from "@/lib/types";
 
 const PAGE_SIZE = 5;
@@ -47,9 +48,41 @@ function windowFor(days: number) {
   return { sinceStr: format(since), todayStr: format(today) };
 }
 
-async function loadCandidates(): Promise<HomeAlbum[]> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.albums;
+// Requests that arrive while a refresh is already running (page 0 and a
+// quick "next page" click, StrictMode's double effect in dev, a reload) wait
+// on that same refresh instead of each kicking off their own full scrape.
+let inFlight: Promise<HomeAlbum[]> | null = null;
 
+// The last good batch, saved to disk so a server restart can serve it
+// straight away (stale is fine — it refreshes in the background, below)
+// instead of the first visit waiting on a full scrape. See persistentCache.ts.
+const PERSIST_NAME = "home-new-releases";
+let restoring: Promise<void> | null = null;
+
+async function loadCandidates(): Promise<HomeAlbum[]> {
+  restoring ??= readPersisted<HomeAlbum[]>(PERSIST_NAME).then((saved) => {
+    if (saved && !cache) cache = { at: saved.at, albums: saved.value };
+  });
+  await restoring;
+
+  if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
+    return Promise.resolve(cache.albums);
+  }
+  inFlight ??= refreshCandidates().finally(() => {
+    inFlight = null;
+  });
+  // Past its refresh window, the last batch is still served immediately
+  // while the refresh above runs in the background — otherwise whoever
+  // visits first after it expires waits through a full ~7s scrape. Only
+  // the very first load (nothing cached yet) waits on the scrape itself.
+  if (cache) {
+    inFlight.catch(() => {});
+    return Promise.resolve(cache.albums);
+  }
+  return inFlight;
+}
+
+async function refreshCandidates(): Promise<HomeAlbum[]> {
   try {
     const { sinceStr, todayStr } = windowFor(NEW_RELEASE_WINDOW_DAYS);
     let releaseGroups = await searchReleaseGroupsInDateWindow(sinceStr, todayStr, {
@@ -81,19 +114,15 @@ async function loadCandidates(): Promise<HomeAlbum[]> {
             .join("")
             .trim() ?? "Unknown artist";
 
-        // Run together rather than one after the other — findITunesArtwork
-        // is already paced/cached by its own shared queue (see itunes.ts), so
-        // this doesn't add to the per-candidate wait.
-        const [listeners, itunesArtUrl] = await Promise.all([
-          getArtistListeners(artist),
-          findITunesArtwork(artist, rg.title),
-        ]);
+        const listeners = await getArtistListeners(artist);
 
         return {
           mbid: rg.id,
           title: rg.title,
           artist,
-          coverArtUrl: itunesArtUrl ?? coverArtArchiveUrl(rg.id),
+          // Resolved per image when the browser requests it, not here —
+          // see lazyArtworkUrl in itunes.ts.
+          coverArtUrl: lazyArtworkUrl(artist, rg.title, coverArtArchiveSrc(rg.id)),
           releaseDate: rg["first-release-date"]!,
           listeners,
         };
@@ -111,6 +140,7 @@ async function loadCandidates(): Promise<HomeAlbum[]> {
     }));
 
     cache = { at: Date.now(), albums };
+    void writePersisted(PERSIST_NAME, albums);
     return albums;
   } catch (err) {
     // A fresh refresh can fail for reasons that have nothing to do with

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { HomeAlbum, SearchResult } from "@/lib/types";
 import AlbumDetailModal from "./AlbumDetailModal";
-import CoverImage from "./CoverImage";
+import CoverImage, { COVER_LOADING_CLASS } from "./CoverImage";
 
 type SaveStatus = "queue" | "library";
 
@@ -17,6 +17,7 @@ type SaveStatus = "queue" | "library";
 // always tries the real URL first.
 function UpcomingAlbumTile({ album }: { album: HomeAlbum }) {
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   if (!album.coverArtUrl || failed) {
     return (
@@ -51,8 +52,11 @@ function UpcomingAlbumTile({ album }: { album: HomeAlbum }) {
       <img
         src={album.coverArtUrl}
         alt={`${album.title} cover art`}
+        onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
-        className="aspect-square w-full rounded-lg object-cover"
+        className={`aspect-square w-full rounded-lg object-cover ${
+          loaded ? "" : COVER_LOADING_CLASS
+        }`}
       />
       <div>
         <p className="truncate text-xs font-medium">{album.title}</p>

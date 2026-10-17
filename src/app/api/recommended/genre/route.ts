@@ -7,10 +7,12 @@ import {
   getSavedMbids,
 } from "@/lib/recommendations";
 
-const TOP_ARTIST_COUNT = 8;
+// Each artist contributes one album (see collectAlbumsForArtists), so
+// filling the 18-album pool takes 18 artists.
+const TOP_ARTIST_COUNT = 18;
 // A "Refresh" widens the top-artist net so there's a real pool of fresh
 // candidates to draw from, instead of just re-ranking the same handful.
-const TOP_ARTIST_COUNT_REFRESH = 16;
+const TOP_ARTIST_COUNT_REFRESH = 30;
 
 // GET /api/recommended/genre?tag=...[&exclude=mbid,mbid,...] — finds top
 // artists for a Last.fm tag (genre) and surfaces their top albums.

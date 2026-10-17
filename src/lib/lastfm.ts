@@ -1,4 +1,6 @@
 import { createTtlCache } from "./apiCache";
+import { mapWithConcurrency } from "./concurrency";
+import { baseAlbumTitle } from "./searchRelevance";
 
 // Server-only Last.fm API client. All the methods this app uses (artist
 // info/search/similar/top albums, tag charts, global charts) are public GET
@@ -13,6 +15,8 @@ type LastfmErrorResponse = { error?: number; message?: string };
 // instead of re-hitting the API.
 const LASTFM_CACHE_TTL_MS = 10 * 60 * 1000;
 const lastfmCache = createTtlCache<unknown>(LASTFM_CACHE_TTL_MS);
+// Bounds a stuck request — search results wait on a batch of these.
+const LASTFM_TIMEOUT_MS = 4000;
 
 export async function lastfmFetch<T>(
   method: string,
@@ -38,7 +42,9 @@ export async function lastfmFetch<T>(
     url.searchParams.set(key, value);
   }
 
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(LASTFM_TIMEOUT_MS),
+  });
   const data: T & LastfmErrorResponse = await response.json();
 
   if (!response.ok || data.error) {
@@ -63,4 +69,115 @@ export async function getArtistListeners(name: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+// The id for an album known only from Last.fm, in the same opaque "mbid"
+// field the rest of the app keys albums by (like search's `itunes:` ids).
+// /api/tracklist resolves a real MusicBrainz id from artist+title on demand
+// for any id that isn't one. The parts are URI-encoded so the id never
+// contains a comma — Recommended's `exclude` list is comma-separated.
+export function lastfmAlbumId(artist: string, title: string): string {
+  return `lastfm:${encodeURIComponent(artist)}::${encodeURIComponent(title)}`;
+}
+
+// Last.fm's generic grey star, served in place of a real cover when it
+// has none — treated as no image.
+const LASTFM_PLACEHOLDER_IMAGE = "2a96cbd8b46e442fc41c2b86b821562f";
+
+type LastfmImage = { "#text": string; size: string };
+
+// Last.fm's 300x300 cover from an image list, or null when it has none.
+export function lastfmCoverUrl(images: LastfmImage[] | undefined): string | null {
+  const url = images?.find((i) => i.size === "extralarge")?.["#text"];
+  return url && !url.includes(LASTFM_PLACEHOLDER_IMAGE) ? url : null;
+}
+
+// One album.getinfo lookup, shared by everything that needs it: search
+// ranking reads the play count, cover art reads the image — and since
+// lastfmFetch caches by params, a cover requested for a search result
+// that was just ranked costs no second request. Fields are 0/null on any
+// failure or no match.
+export async function getAlbumInfo(
+  artist: string,
+  album: string,
+): Promise<{ playcount: number; imageUrl: string | null }> {
+  try {
+    const data = await lastfmFetch<{
+      album?: { playcount?: string | number; image?: LastfmImage[] };
+    }>(
+      "album.getinfo",
+      // iTunes titles carry store-listing suffixes ("... (Deluxe Version)",
+      // "... - Single") that Last.fm doesn't, so a lookup on the raw title
+      // misses — or lands on a little-played edition instead of the album.
+      { artist, album: baseAlbumTitle(album), autocorrect: "1" },
+    );
+    return {
+      playcount: Number(data.album?.playcount ?? 0) || 0,
+      imageUrl: lastfmCoverUrl(data.album?.image),
+    };
+  } catch {
+    return { playcount: 0, imageUrl: null };
+  }
+}
+
+// An album's all-time Last.fm play count (scrobbles) — the closest
+// available stand-in for "streams": Spotify's API doesn't expose stream
+// counts, and its popularity score is gone for this app too (see
+// api/home/new-releases/route.ts). Used to order search results
+// most-played first. 0 when unknown, so the album is ranked last rather
+// than dropped.
+export async function getAlbumPlaycount(
+  artist: string,
+  album: string,
+): Promise<number> {
+  return (await getAlbumInfo(artist, album)).playcount;
+}
+
+// Top album matches for a search query, in Last.fm's own order — by
+// popularity, which plain text search (iTunes, MusicBrainz) doesn't do:
+// iTunes doesn't return Tame Impala's "Currents" for "currents" at all, and
+// of the dozens of albums titled exactly that, MusicBrainz ranked it 57th.
+// Used to make sure the popular matches are in the result pool at all,
+// before play counts sort it. `imageUrl` is Last.fm's 300x300 cover, or
+// null when it has none.
+export async function searchPopularAlbums(
+  query: string,
+  limit: number,
+): Promise<{ title: string; artist: string; imageUrl: string | null }[]> {
+  try {
+    const data = await lastfmFetch<{
+      results?: {
+        albummatches?: {
+          album?: {
+            name: string;
+            artist: string;
+            image?: { "#text": string; size: string }[];
+          }[];
+        };
+      };
+    }>("album.search", { album: query, limit: String(limit) });
+    return (data.results?.albummatches?.album ?? []).map((a) => ({
+      title: a.name,
+      artist: a.artist,
+      imageUrl: lastfmCoverUrl(a.image),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// Search results wait on this whole batch (~30 lookups at ~150-300ms each),
+// so it runs wide.
+const PLAYCOUNT_LOOKUP_CONCURRENCY = 12;
+
+// Attaches each result's play count (see getAlbumPlaycount), several
+// lookups in flight at once — Last.fm has no strict per-second limit the
+// way MusicBrainz/iTunes do.
+export function attachPlaycounts<T extends { artist: string; title: string }>(
+  results: T[],
+): Promise<(T & { playcount: number })[]> {
+  return mapWithConcurrency(results, PLAYCOUNT_LOOKUP_CONCURRENCY, async (r) => ({
+    ...r,
+    playcount: await getAlbumPlaycount(r.artist, r.title),
+  }));
 }

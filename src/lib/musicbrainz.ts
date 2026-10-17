@@ -1,4 +1,9 @@
 import { createTtlCache } from "./apiCache";
+import {
+  createPacedQueue,
+  PRIORITY_BACKGROUND,
+  PRIORITY_INTERACTIVE,
+} from "./pacedQueue";
 
 // MusicBrainz requires every client to identify itself with a descriptive
 // User-Agent that includes contact info, or it will start rejecting requests.
@@ -11,43 +16,49 @@ export const MUSICBRAINZ_USER_AGENT =
 // within this window.
 const MUSICBRAINZ_CACHE_TTL_MS = 10 * 60 * 1000;
 
-// How long a single lookup — including its own retries — is allowed to
-// take before giving up. Most requests resolve in well under a second, but
-// a rare one gets stuck far longer (seemingly queued behind MusicBrainz's
-// own throttling); when resolving a whole batch of recommendation
-// candidates together, one stuck request would otherwise hold up the
-// entire page. The timeout is shared across retries (one deadline from the
-// first attempt), not restarted per attempt, so it bounds the whole chain.
+// How long a single request attempt may take once it's actually sent.
+// Most resolve in well under a second, but a rare one gets stuck far
+// longer; this caps it.
 const MUSICBRAINZ_TIMEOUT_MS = 2000;
 
-// MusicBrainz's search index occasionally reports itself as busy — it still
-// answers with 503 and recovers within a request or two, so a short retry
-// clears up most of these transiently instead of surfacing as an error.
+// MusicBrainz allows ~1 request/second per IP and rejects anything faster
+// ("Your requests are exceeding the allowable rate limit"). This used to be
+// left to each caller, and several fired 6-10 requests at once — which is
+// what made the home rows and Recommended come back empty or fail outright.
+// Now every request in the app goes through this one paced queue (see
+// pacedQueue.ts), with a person's own lookups (search, tracklist, artist
+// recommendations) ahead of background work (the home rows' scrape).
+const MUSICBRAINZ_REQUEST_INTERVAL_MS = 1100;
+const paced = createPacedQueue(MUSICBRAINZ_REQUEST_INTERVAL_MS);
+const MUSICBRAINZ_MAX_ATTEMPTS = 3;
+
+// MusicBrainz still answers 503 now and then when it's busy overall, and
+// recovers within a request or two — each retry goes back through the
+// queue, which spaces it out like any other request.
 export async function fetchMusicBrainz(
   musicBrainzUrl: URL,
-  attempt = 0,
-  signal: AbortSignal = AbortSignal.timeout(MUSICBRAINZ_TIMEOUT_MS),
+  {
+    priority = PRIORITY_INTERACTIVE,
+    timeoutMs = MUSICBRAINZ_TIMEOUT_MS,
+  }: { priority?: number; timeoutMs?: number } = {},
 ): Promise<Response> {
-  const response = await fetch(musicBrainzUrl, {
-    headers: {
-      "User-Agent": MUSICBRAINZ_USER_AGENT,
-      Accept: "application/json",
-    },
-    signal,
-  });
-
-  if (response.status === 503 && attempt < 2) {
-    await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-    return fetchMusicBrainz(musicBrainzUrl, attempt + 1, signal);
+  for (let attempt = 1; ; attempt++) {
+    const response = await paced(
+      () =>
+        fetch(musicBrainzUrl, {
+          headers: {
+            "User-Agent": MUSICBRAINZ_USER_AGENT,
+            Accept: "application/json",
+          },
+          signal: AbortSignal.timeout(timeoutMs),
+        }),
+      priority,
+    );
+    if (response.status !== 503 || attempt === MUSICBRAINZ_MAX_ATTEMPTS) {
+      return response;
+    }
   }
-
-  return response;
 }
-
-// MusicBrainz allows ~1 request/second per IP. Any caller doing more than a
-// single lookup (cross-referencing a batch of candidates, resolving several
-// artists) must space its own calls out by at least this long.
-export const MUSICBRAINZ_REQUEST_INTERVAL_MS = 1100;
 
 const RELEASE_GROUP_SEARCH_PAGE_SIZE = 100;
 
@@ -65,7 +76,7 @@ export type ReleaseGroupSearchHit = {
 // entirely *imprecise* dates (MusicBrainz entries stamped only "2026", with
 // no month/day) while the day-precise ones actually usable for a "new this
 // week" or "coming this month" row are scattered deep into the full result
-// set. Paginates (respecting the 1 req/sec limit between pages) until
+// set. Paginates (each page paced like any other request) until
 // enough day-precise, in-window candidates are collected — or the results
 // are exhausted, or maxPages is hit — rather than trusting the first page
 // to contain them, which is what previously made the New releases /
@@ -98,11 +109,10 @@ export async function searchReleaseGroupsInDateWindow(
 
     let hits: ReleaseGroupSearchHit[];
     try {
-      const response = await fetchMusicBrainz(
-        url,
-        0,
-        AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-      );
+      const response = await fetchMusicBrainz(url, {
+        priority: PRIORITY_BACKGROUND,
+        timeoutMs: SEARCH_TIMEOUT_MS,
+      });
       const data: {
         "release-groups"?: ReleaseGroupSearchHit[];
         error?: string;
@@ -132,11 +142,6 @@ export async function searchReleaseGroupsInDateWindow(
 
     const exhausted = hits.length < RELEASE_GROUP_SEARCH_PAGE_SIZE;
     if (exhausted || found.length >= targetCount) break;
-    if (page < maxPages - 1) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, MUSICBRAINZ_REQUEST_INTERVAL_MS),
-      );
-    }
   }
 
   return found;
@@ -147,8 +152,12 @@ export async function searchReleaseGroupsInDateWindow(
 // proxy means the browser only ever waits on that once per image, ever,
 // instead of on every page load. See /api/cover-art/route.ts.
 export function coverArtArchiveUrl(releaseGroupId: string): string {
-  const original = `https://coverartarchive.org/release-group/${releaseGroupId}/front-250`;
-  return `/api/cover-art?src=${encodeURIComponent(original)}`;
+  return `/api/cover-art?src=${encodeURIComponent(coverArtArchiveSrc(releaseGroupId))}`;
+}
+
+// The raw Cover Art Archive URL, unproxied — for lazyArtworkUrl's fallback.
+export function coverArtArchiveSrc(releaseGroupId: string): string {
+  return `https://coverartarchive.org/release-group/${releaseGroupId}/front-250`;
 }
 
 function escapeLucene(value: string): string {
@@ -183,6 +192,10 @@ export async function resolveReleaseGroup(
 
   try {
     const response = await fetchMusicBrainz(url);
+    // A 503 that outlasted fetchMusicBrainz's retries is MusicBrainz
+    // throttling, not "no such album" — caching it as null would hide this
+    // candidate for the whole cache window.
+    if (!response.ok) return null;
     const data: { "release-groups"?: { id: string }[] } =
       await response.json();
     const match = data["release-groups"]?.[0];
@@ -222,6 +235,9 @@ async function searchReleaseGroups(
 
   try {
     const response = await fetchMusicBrainz(url);
+    // Throttled, not empty — don't cache it as no results (see
+    // resolveReleaseGroup).
+    if (!response.ok) return [];
     const data: {
       "release-groups"?: {
         id: string;
@@ -310,7 +326,10 @@ export async function getArtistMostRecentAlbumArt(
   url.searchParams.set("limit", "10");
 
   try {
-    const response = await fetchMusicBrainz(url);
+    // Only used by the Upcoming row's background scrape.
+    const response = await fetchMusicBrainz(url, {
+      priority: PRIORITY_BACKGROUND,
+    });
     const data: {
       "release-groups"?: { id: string; "first-release-date"?: string }[];
     } = await response.json();

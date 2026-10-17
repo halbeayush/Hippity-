@@ -2,6 +2,8 @@ import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
+import { findITunesArtworkSource } from "@/lib/itunes";
+import { getAlbumInfo } from "@/lib/lastfm";
 
 // Cover Art Archive (and the Internet Archive mirrors it redirects to) can
 // be slow to respond and is occasionally briefly down, which every album
@@ -11,9 +13,14 @@ import { NextRequest, NextResponse } from "next/server";
 // album appearing in the Library grid and a search result, revisiting
 // tomorrow — is served instantly from our own origin instead of Internet
 // Archive or Apple's CDN. Only ever constructed by coverArtArchiveUrl
-// (musicbrainz.ts) or itunesArtworkProxyUrl (itunes.ts), so the host
-// allowlist below only needs to cover those two cases.
-const ALLOWED_HOSTS = new Set(["coverartarchive.org"]);
+// (musicbrainz.ts) or itunesArtworkProxyUrl/lazyArtworkUrl (itunes.ts), so
+// the host allowlist below only needs to cover those cases.
+// Last.fm's covers ride along with its popular-album search matches (see
+// searchPopularAlbums in lastfm.ts).
+const ALLOWED_HOSTS = new Set([
+  "coverartarchive.org",
+  "lastfm-img.freetls.fastly.net",
+]);
 // iTunes artwork is served from several numbered CDN nodes
 // (is1-ssl.mzstatic.com, is2-ssl.mzstatic.com, ...), not one fixed host.
 const ALLOWED_HOST_SUFFIXES = [".mzstatic.com"];
@@ -188,7 +195,69 @@ function warmCacheInBackground(src: string): void {
   });
 }
 
+function imageResponse(image: { data: Buffer; contentType: string }) {
+  return new NextResponse(new Uint8Array(image.data), {
+    headers: {
+      "Content-Type": image.contentType,
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
+}
+
+// Lazy mode (?artist=&title=&fallback=, built by lazyArtworkUrl in
+// itunes.ts): the cover is looked up here, per image, instead of in the
+// row's API route ahead of its whole response. Sources are tried fastest
+// first:
+//   1. Last.fm — one ~200ms lookup, no strict rate limit, and usually
+//      already cached from search ranking (see getAlbumInfo).
+//   2. `fallback` (Cover Art Archive, for MusicBrainz-sourced albums) — a
+//      plain fetch, no queue.
+//   3. iTunes — last, because its lookups go through one shared queue
+//      spaced ~3s apart (see itunes.ts). With iTunes first, a page of 10
+//      covers took ~30s for the last one to appear.
+// The resolved image is cached on disk under this lookup's own key, so
+// after the first time the URL is served straight from disk.
+async function lazyArtwork(
+  artist: string,
+  title: string,
+  fallback: string | null,
+): Promise<NextResponse> {
+  const lookupKey = `lookup:${artist.toLowerCase()}::${title.toLowerCase()}::${fallback ?? ""}`;
+  const cached = await readFromCache(lookupKey);
+  if (cached) return imageResponse(cached);
+
+  const fallbackSrc =
+    fallback && URL.canParse(fallback) && isAllowedHost(new URL(fallback).hostname)
+      ? fallback
+      : null;
+  const sources: (() => Promise<string | null>)[] = [
+    async () => (await getAlbumInfo(artist, title)).imageUrl,
+    async () => fallbackSrc,
+    () => findITunesArtworkSource(artist, title),
+  ];
+
+  for (const source of sources) {
+    const src = await source();
+    if (!src) continue;
+    const image =
+      (await readFromCache(src)) ?? (await fetchOnce(src, FOREGROUND_TIMEOUT_MS));
+    if (image) {
+      await writeToCache(lookupKey, image.data, image.contentType);
+      return imageResponse(image);
+    }
+    warmCacheInBackground(src);
+  }
+
+  return NextResponse.json({ error: "Cover art not found" }, { status: 404 });
+}
+
 export async function GET(request: NextRequest) {
+  const artist = request.nextUrl.searchParams.get("artist");
+  const title = request.nextUrl.searchParams.get("title");
+  if (artist && title) {
+    return lazyArtwork(artist, title, request.nextUrl.searchParams.get("fallback"));
+  }
+
   const src = request.nextUrl.searchParams.get("src");
   if (!src) {
     return NextResponse.json({ error: "src is required" }, { status: 400 });

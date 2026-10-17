@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { SVGProps } from "react";
+import { useEffect, useState, type SVGProps } from "react";
+import Avatar from "./Avatar";
 
 function HomeIcon(props: SVGProps<SVGSVGElement>) {
   return (
@@ -104,6 +105,57 @@ const NAV_ITEMS = [
   { href: "/social", label: "Social", Icon: SocialIcon },
 ] as const;
 
+type Me = { username: string; displayName: string; avatarColor: string };
+
+// Who's signed in, with a way to sign out. Signing out is a full page load
+// to /login, so nothing from this account stays on screen.
+function AccountMenu() {
+  const [me, setMe] = useState<Me | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setMe(data?.user ?? null))
+      .catch(() => {});
+  }, []);
+
+  async function logOut() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    // Deliberately a full page load, not router.push — see above.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/login");
+  }
+
+  if (!me) return null;
+  return (
+    <div className="relative flex">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label={`Account: ${me.displayName}`}
+        className="flex items-center rounded-lg px-2 hover:bg-white/60 dark:hover:bg-zinc-900/50"
+      >
+        <Avatar displayName={me.displayName} color={me.avatarColor} size="sm" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-20 mt-2 w-48 rounded-xl bg-white p-2 text-sm shadow-lg dark:bg-zinc-900">
+          <p className="truncate px-2 pt-1 font-medium">{me.displayName}</p>
+          <p className="truncate px-2 pb-2 text-xs text-zinc-500">@{me.username}</p>
+          <button
+            type="button"
+            onClick={logOut}
+            className="w-full rounded-lg px-2 py-1.5 text-left text-zinc-700 hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TopNav() {
   const pathname = usePathname();
 
@@ -127,6 +179,7 @@ export default function TopNav() {
           </Link>
         );
       })}
+      <AccountMenu />
     </nav>
   );
 }

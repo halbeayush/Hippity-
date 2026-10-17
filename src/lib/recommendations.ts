@@ -1,53 +1,85 @@
-import { mapWithConcurrency } from "./concurrency";
-import { findITunesArtwork } from "./itunes";
-import { lastfmFetch } from "./lastfm";
-import { resolveReleaseGroup } from "./musicbrainz";
+import { lazyArtworkUrl } from "./itunes";
+import { lastfmAlbumId, lastfmCoverUrl, lastfmFetch } from "./lastfm";
 import { prisma } from "./prisma";
+import { baseAlbumTitle, dedupeKey } from "./searchRelevance";
 import type { AlbumSummary } from "./types";
 
-// Candidates are cross-referenced against MusicBrainz with several in
-// flight at once (continuous refill, not one at a time) rather than one at
-// a time, so this pool can be bigger than what's actually shown at once —
-// the extra candidates are handed to the client as a ready-to-use
-// replacement queue for dismiss/auto-replace, avoiding a follow-up API call
-// for either. A true unbounded burst (all candidates fired simultaneously)
-// was tried and measured worse in practice — a handful of requests would
-// queue behind Node's per-origin connection pool and each take 10+ seconds
-// once finally sent, so this caps how many are in flight together instead.
+// The pool can be bigger than what's actually shown at once — the extra
+// candidates are handed to the client as a ready-to-use replacement queue
+// for dismiss/auto-replace, avoiding a follow-up API call for either.
+// Only one album per artist is shown (see collectAlbumsForArtists) — the
+// rest are fallbacks for when the top one is already saved or was just
+// shown.
 const ALBUMS_PER_ARTIST = 3;
 const DEFAULT_POOL_SIZE = 18;
-const MUSICBRAINZ_RESOLVE_CONCURRENCY = 10;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
+// Identifies a saved album by artist + edition-stripped title, for
+// candidates whose id can't match a saved album's: a recommendation's
+// `lastfm:` id never equals the `itunes:`/MusicBrainz id the same album was
+// saved under.
+export function savedAlbumKey(artist: string, title: string): string {
+  return `album:${dedupeKey(artist, baseAlbumTitle(title))}`;
+}
+
+// Everything the user has saved, as both ids and savedAlbumKeys — check
+// whichever the candidate has.
 export async function getSavedMbids(userId: number): Promise<Set<string>> {
   const albums = await prisma.album.findMany({
     where: { userId },
-    select: { mbid: true },
+    select: { mbid: true, artist: true, title: true },
   });
-  return new Set(albums.map((a) => a.mbid));
+  return new Set(
+    albums.flatMap((a) => [a.mbid, savedAlbumKey(a.artist, a.title)]),
+  );
 }
 
-// Cross-referencing every candidate against MusicBrainz one at a time (its
-// rate limit) makes a cold lookup take tens of seconds, so results for a
-// given mode+params are cached briefly rather than recomputed on every
+// A cold lookup is a few seconds of Last.fm (and, for the artist mode,
+// MusicBrainz) requests, so results for a given mode+params are cached
+// briefly rather than recomputed on every
 // visit/switch back to the same selection. A "refresh" request (exclude
 // list non-empty) always bypasses this — it exists specifically to surface
 // something different, so serving the same cached batch back would defeat it.
 const resultCache = new Map<string, { at: number; albums: AlbumSummary[] }>();
+// A request for a selection that's already being computed (StrictMode's
+// double effect in dev, switching away and back mid-load) waits on that
+// computation instead of starting a second one.
+const inFlight = new Map<string, Promise<AlbumSummary[]>>();
 
 export async function getCachedRecommendations(
   cacheKey: string,
   compute: () => Promise<AlbumSummary[]>,
   { bypassCache = false }: { bypassCache?: boolean } = {},
 ): Promise<AlbumSummary[]> {
-  if (!bypassCache) {
-    const cached = resultCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.albums;
-  }
+  const run = () =>
+    compute().then((albums) => {
+      // An empty batch is far more often MusicBrainz throttling every
+      // candidate's lookup at once than a real "nothing to recommend" —
+      // caching it would leave the page blank for the whole TTL instead of
+      // retrying on the next visit.
+      if (albums.length > 0) {
+        resultCache.set(cacheKey, { at: Date.now(), albums });
+      }
+      return albums;
+    });
+  if (bypassCache) return run();
 
-  const albums = await compute();
-  resultCache.set(cacheKey, { at: Date.now(), albums });
-  return albums;
+  const cached = resultCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.albums;
+
+  let pending = inFlight.get(cacheKey);
+  if (!pending) {
+    pending = run().finally(() => inFlight.delete(cacheKey));
+    inFlight.set(cacheKey, pending);
+  }
+  // Past its TTL, the last batch is still served immediately while the
+  // recompute above runs in the background, rather than making this visit
+  // wait through it. Only a selection never computed before waits.
+  if (cached) {
+    pending.catch(() => {});
+    return cached.albums;
+  }
+  return pending;
 }
 
 // Picks up to poolSize entries from a ranked candidate list, preferring
@@ -71,16 +103,19 @@ export function preferFresh<T>(
   return [...fresh, ...seen].slice(0, poolSize);
 }
 
-type LastfmAlbum = { name: string };
-type Candidate = { artistName: string; albumName: string };
+type LastfmAlbum = {
+  name: string;
+  image?: { "#text": string; size: string }[];
+};
 
 // Given a list of artist names, pulls each artist's top albums from
-// Last.fm and cross-references them against MusicBrainz to get a real
-// release-group id — Last.fm's own art coverage is inconsistent and its
-// `mbid` fields are often stale, so results are never trusted directly (see
-// resolveReleaseGroup). Artwork itself comes from iTunes first (a single
-// response with working art, vs. MusicBrainz's own Cover Art Archive cross-
-// reference), falling back to Cover Art Archive when iTunes has no match.
+// Last.fm. These used to be cross-referenced against MusicBrainz for a
+// release-group id first, but that was ~24 MusicBrainz lookups per load —
+// slow under its 1 req/sec limit, and the main reason this page came back
+// short or empty when MusicBrainz throttled. Nothing needs the id up front:
+// /api/tracklist resolves one from artist+title for any non-UUID id, the
+// same as for search results. Covers come from Last.fm's own response,
+// falling back to a per-image lookup (see lazyArtworkUrl) when it has none.
 export async function collectAlbumsForArtists(
   artistNames: string[],
   savedMbids: Set<string>,
@@ -90,7 +125,7 @@ export async function collectAlbumsForArtists(
   // Each artist's top-albums lookup is independent, so run them together
   // instead of one artist at a time.
   const perArtistAlbums = await Promise.all(
-    artistNames.map(async (artistName): Promise<Candidate[]> => {
+    artistNames.map(async (artistName): Promise<AlbumSummary[]> => {
       try {
         const data = await lastfmFetch<{
           topalbums?: { album?: LastfmAlbum[] };
@@ -98,53 +133,39 @@ export async function collectAlbumsForArtists(
           artist: artistName,
           limit: String(ALBUMS_PER_ARTIST),
         });
-        return (data.topalbums?.album ?? []).map((album) => ({
-          artistName,
-          albumName: album.name,
-        }));
+        return (data.topalbums?.album ?? [])
+          // Last.fm lists scrobbles with no album tag under "(null)".
+          .filter((album) => album.name && album.name !== "(null)")
+          .map((album) => {
+            const imageUrl = lastfmCoverUrl(album.image);
+            return {
+              mbid: lastfmAlbumId(artistName, album.name),
+              title: album.name,
+              artist: artistName,
+              coverArtUrl: imageUrl
+                ? `/api/cover-art?src=${encodeURIComponent(imageUrl)}`
+                : lazyArtworkUrl(artistName, album.name, ""),
+            };
+          });
       } catch {
         return [];
       }
     }),
   );
-  const candidates = perArtistAlbums.flat();
 
-  // Cross-reference candidates against MusicBrainz with several in flight
-  // at once (rather than one at a time behind a fixed delay) — the biggest
-  // single contributor to a slow cold load. MusicBrainz answers a burst
-  // like this with a mix of real responses and 503s; fetchMusicBrainz's
-  // own retry and timeout (musicbrainz.ts) absorb those without this
-  // needing to know.
-  const resolved = await mapWithConcurrency(
-    candidates,
-    MUSICBRAINZ_RESOLVE_CONCURRENCY,
-    async (candidate) => {
-      const match = await resolveReleaseGroup(
-        candidate.artistName,
-        candidate.albumName,
-      );
-      if (!match) return null;
-      const itunesArtUrl = await findITunesArtwork(
-        candidate.artistName,
-        candidate.albumName,
-      );
-      return { ...candidate, ...match, coverArtUrl: itunesArtUrl ?? match.coverArtUrl };
-    },
-  );
-
+  // One album per artist, so the page isn't three J. Cole albums in a row:
+  // each artist's most popular album that isn't already saved — and on a
+  // refresh, preferably one that wasn't just shown, so Refresh can swap in
+  // a different album from the same artist rather than only reshuffling.
+  // Their next-best albums stay as fallbacks in case everything else is
+  // saved or was just shown.
   const ranked: AlbumSummary[] = [];
-  const seenMbids = new Set<string>();
-  for (const match of resolved) {
-    if (!match) continue;
-    if (savedMbids.has(match.mbid) || seenMbids.has(match.mbid)) continue;
-
-    seenMbids.add(match.mbid);
-    ranked.push({
-      mbid: match.mbid,
-      title: match.albumName,
-      artist: match.artistName,
-      coverArtUrl: match.coverArtUrl,
-    });
+  for (const albums of perArtistAlbums) {
+    const unsaved = albums.filter(
+      (a) => !savedMbids.has(savedAlbumKey(a.artist, a.title)),
+    );
+    const pick = unsaved.find((a) => !excludeMbids.has(a.mbid)) ?? unsaved[0];
+    if (pick) ranked.push(pick);
   }
 
   return preferFresh(ranked, (a) => a.mbid, poolSize, excludeMbids);

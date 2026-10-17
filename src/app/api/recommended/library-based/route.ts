@@ -9,11 +9,14 @@ import {
 } from "@/lib/recommendations";
 
 const SEED_ARTIST_COUNT = 4;
-const SIMILAR_PER_SEED = 5;
-const SIMILAR_ARTIST_COUNT = 8;
+// Each similar artist contributes one album (see collectAlbumsForArtists),
+// so filling the 18-album pool takes 18 artists — 4 seeds x 10 similar
+// leaves room for the overlap between seeds.
+const SIMILAR_PER_SEED = 10;
+const SIMILAR_ARTIST_COUNT = 18;
 // A "Refresh" widens the similar-artist net so there's a real pool of fresh
 // candidates to draw from, instead of just re-ranking the same handful.
-const SIMILAR_ARTIST_COUNT_REFRESH = 16;
+const SIMILAR_ARTIST_COUNT_REFRESH = 30;
 
 type LastfmSimilarArtist = { name: string; match: string };
 

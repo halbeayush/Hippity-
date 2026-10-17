@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { coverArtArchiveUrl, fetchMusicBrainz } from "@/lib/musicbrainz";
-import { relevanceScore } from "@/lib/searchRelevance";
+import { lazyArtworkUrl } from "@/lib/itunes";
+import { attachPlaycounts } from "@/lib/lastfm";
+import { coverArtArchiveSrc, fetchMusicBrainz } from "@/lib/musicbrainz";
+import { rankSearchResults, relevanceScore } from "@/lib/searchRelevance";
+import type { SearchResult } from "@/lib/types";
 
 const RESULT_LIMIT = 18;
 
@@ -28,10 +31,8 @@ type MusicBrainzSearchResponse = {
 // those. The client (useAlbumSearch) fires this in parallel with /api/search
 // and merges in whatever turns up here that isn't already in the iTunes
 // results, so this route is free to be the slower one: unlike iTunes, a
-// MusicBrainz result needs its own separate Cover Art Archive lookup
-// (coverArtArchiveUrl proxies and caches it, but the first fetch for a
-// given release is a real network round trip, not bundled into this
-// response the way iTunes' artwork is).
+// MusicBrainz result's cover isn't bundled into the response — it's looked
+// up per image (see lazyArtworkUrl).
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get("q")?.trim();
 
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const results = [...(data["release-groups"] ?? [])]
+    const mostRelevant: SearchResult[] = [...(data["release-groups"] ?? [])]
       .map((releaseGroup) => {
         const artist =
           releaseGroup["artist-credit"]
@@ -68,10 +69,15 @@ export async function GET(request: NextRequest) {
           title: releaseGroup.title,
           artist,
           year: releaseGroup["first-release-date"]?.slice(0, 4) ?? null,
-          // Not every release has cover art, so the frontend falls back to
-          // a placeholder if this 404s — same as everywhere else artwork
-          // is sourced from Cover Art Archive.
-          coverArtUrl: coverArtArchiveUrl(releaseGroup.id),
+          // Last.fm's cover first (already fetched for ranking, below),
+          // Cover Art Archive second — Cover Art Archive alone is often
+          // slow or missing. Falls back to a placeholder if neither has
+          // one. See lazyArtwork in /api/cover-art.
+          coverArtUrl: lazyArtworkUrl(
+            artist,
+            releaseGroup.title,
+            coverArtArchiveSrc(releaseGroup.id),
+          ),
         };
       })
       .sort(
@@ -80,6 +86,13 @@ export async function GET(request: NextRequest) {
           relevanceScore(query, a.title, a.artist),
       )
       .slice(0, RESULT_LIMIT);
+
+    // Match quality, then most-played first, one copy per album — see
+    // rankSearchResults.
+    const results = rankSearchResults(
+      await attachPlaycounts(mostRelevant),
+      query,
+    );
 
     return NextResponse.json({ results });
   } catch (err) {

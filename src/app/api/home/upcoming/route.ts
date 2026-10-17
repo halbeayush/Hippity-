@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mapWithConcurrency } from "@/lib/concurrency";
-import { findITunesArtwork } from "@/lib/itunes";
+import { lazyArtworkUrl } from "@/lib/itunes";
 import { getArtistListeners } from "@/lib/lastfm";
 import {
-  coverArtArchiveUrl,
+  coverArtArchiveSrc,
   fetchMusicBrainz,
   getArtistMostRecentAlbumArt,
   searchReleaseGroupsInDateWindow,
   type ReleaseGroupSearchHit,
 } from "@/lib/musicbrainz";
+import { PRIORITY_BACKGROUND } from "@/lib/pacedQueue";
+import { readPersisted, writePersisted } from "@/lib/persistentCache";
 import type { HomeAlbum } from "@/lib/types";
 
 const PAGE_SIZE = 5;
@@ -22,14 +24,10 @@ const WIDENED_WINDOW_DAYS = 150;
 const SEARCH_MAX_PAGES = 6;
 const WIDENED_SEARCH_MAX_PAGES = 4;
 // Governs the one merged per-candidate pass below (MusicBrainz language +
-// Last.fm listeners/fallback art + iTunes artwork, all fired together).
-// MusicBrainz's own rate limit (~1 req/sec) still applies per request, but
-// there's no rule against having several requests in flight at once instead
-// of one strictly-serial chain — fetchMusicBrainz's retry/backoff on 503
-// absorbs the throttling this trades for. This is what actually made the
-// row slow: a release-group's language used to be looked up one release at
-// a time, each wait spaced 1.1s after the last, and as its own pass ahead
-// of everything else besides.
+// Last.fm listeners/fallback art, fired together). The MusicBrainz half is
+// paced to its ~1 req/sec limit by fetchMusicBrainz's shared queue no
+// matter how many are in flight — this just keeps the Last.fm half (no
+// strict limit) from waiting behind it one candidate at a time.
 const CANDIDATE_LOOKUP_CONCURRENCY = 6;
 // Repeat visits (and other users, in a multi-user deployment) hit this
 // cache instead of re-scraping MusicBrainz/Last.fm.
@@ -64,7 +62,9 @@ async function getReleaseLanguage(
   try {
     const url = new URL(`https://musicbrainz.org/ws/2/release/${release.id}`);
     url.searchParams.set("fmt", "json");
-    const response = await fetchMusicBrainz(url);
+    const response = await fetchMusicBrainz(url, {
+      priority: PRIORITY_BACKGROUND,
+    });
     const data: MusicBrainzReleaseLookup = await response.json();
     return data["text-representation"]?.language ?? null;
   } catch {
@@ -114,9 +114,41 @@ function windowFor(days: number) {
   return { todayStr: format(today), untilStr: format(until) };
 }
 
-async function loadCandidates(): Promise<HomeAlbum[]> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.albums;
+// Requests that arrive while a refresh is already running (page 0 and a
+// quick "next page" click, StrictMode's double effect in dev, a reload) wait
+// on that same refresh instead of each kicking off their own full scrape.
+let inFlight: Promise<HomeAlbum[]> | null = null;
 
+// The last good batch, saved to disk so a server restart can serve it
+// straight away (stale is fine — it refreshes in the background, below)
+// instead of the first visit waiting on a full scrape. See persistentCache.ts.
+const PERSIST_NAME = "home-upcoming";
+let restoring: Promise<void> | null = null;
+
+async function loadCandidates(): Promise<HomeAlbum[]> {
+  restoring ??= readPersisted<HomeAlbum[]>(PERSIST_NAME).then((saved) => {
+    if (saved && !cache) cache = { at: saved.at, albums: saved.value };
+  });
+  await restoring;
+
+  if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
+    return Promise.resolve(cache.albums);
+  }
+  inFlight ??= refreshCandidates().finally(() => {
+    inFlight = null;
+  });
+  // Past its refresh window, the last batch is still served immediately
+  // while the refresh above runs in the background — otherwise whoever
+  // visits first after it expires waits through a full ~7s scrape. Only
+  // the very first load (nothing cached yet) waits on the scrape itself.
+  if (cache) {
+    inFlight.catch(() => {});
+    return Promise.resolve(cache.albums);
+  }
+  return inFlight;
+}
+
+async function refreshCandidates(): Promise<HomeAlbum[]> {
   try {
     const { todayStr, untilStr } = windowFor(UPCOMING_WINDOW_DAYS);
     let releaseGroups = await searchReleaseGroupsInDateWindow(todayStr, untilStr, {
@@ -138,14 +170,13 @@ async function loadCandidates(): Promise<HomeAlbum[]> {
       ];
     }
 
-    // These three lookups per candidate — MusicBrainz (language), Last.fm
-    // (listener count + fallback art), iTunes (primary artwork) — are
-    // independent of each other, so they run together in one Promise.all
-    // rather than as separate sequential passes over the whole candidate
-    // list. That used to mean the iTunes/Last.fm pass didn't even start
-    // until every candidate's MusicBrainz language lookup had finished —
-    // exactly the "each step waits on the previous one" chain this was
-    // meant to get away from.
+    // These lookups per candidate — MusicBrainz (language), Last.fm
+    // (listener count + fallback art) — are independent of each other, so
+    // they run together in one Promise.all rather than as separate
+    // sequential passes over the whole candidate list. Primary artwork
+    // (iTunes) isn't looked up here at all: waiting on it for every
+    // candidate through iTunes' ~3s-apart queue is what used to make this
+    // row take minutes. See lazyArtworkUrl in itunes.ts.
     const ranked: RankedHomeAlbum[] = await mapWithConcurrency(
       releaseGroups,
       CANDIDATE_LOOKUP_CONCURRENCY,
@@ -156,18 +187,18 @@ async function loadCandidates(): Promise<HomeAlbum[]> {
             .join("")
             .trim() ?? "Unknown artist";
 
-        const [language, { listeners, fallbackArtUrl }, itunesArtUrl] =
-          await Promise.all([
-            getReleaseLanguage(rg),
-            lookupArtistInfo(artist),
-            findITunesArtwork(artist, rg.title),
-          ]);
+        const [language, { listeners, fallbackArtUrl }] = await Promise.all([
+          getReleaseLanguage(rg),
+          lookupArtistInfo(artist),
+        ]);
 
         return {
           mbid: rg.id,
           title: rg.title,
           artist,
-          coverArtUrl: itunesArtUrl ?? coverArtArchiveUrl(rg.id),
+          // Resolved per image when the browser requests it, not here —
+          // see lazyArtworkUrl in itunes.ts.
+          coverArtUrl: lazyArtworkUrl(artist, rg.title, coverArtArchiveSrc(rg.id)),
           fallbackArtUrl,
           releaseDate: rg["first-release-date"]!,
           listeners,
@@ -193,6 +224,7 @@ async function loadCandidates(): Promise<HomeAlbum[]> {
       releaseDate: album.releaseDate,
     }));
     cache = { at: Date.now(), albums };
+    void writePersisted(PERSIST_NAME, albums);
     return albums;
   } catch (err) {
     // A fresh refresh can fail for reasons that have nothing to do with

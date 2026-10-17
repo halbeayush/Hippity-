@@ -12,15 +12,23 @@ datasource db {
   provider = "sqlite"
 }
 
-// The app has no login yet — one seeded row (username "me") stands in for
-// the signed-in person, alongside seeded/real friends. See src/lib/currentUser.ts.
+// A person with an account — signing in by username + password, by Google,
+// or both. Seeded friends have neither, so nobody can sign in as them. The
+// pre-login placeholder row (username "me") is claimed by the first account
+// created, keeping its library and social data. See src/lib/auth.ts.
 model User {
-  id          Int      @id @default(autoincrement())
-  username    String   @unique
-  displayName String
-  avatarColor String   @default("#71717a")
-  createdAt   DateTime @default(now())
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  displayName  String
+  avatarColor  String   @default("#71717a")
+  createdAt    DateTime @default(now())
+  // scrypt hash (see src/lib/password.ts); null for Google-only accounts.
+  passwordHash String?
+  // Google's stable account id ("sub"); null unless signed in with Google.
+  googleId     String?  @unique
+  email        String?
 
+  sessions            Session[]
   albums              Album[]
   activities          Activity[]
   weeklyTopTracks     WeeklyTopTrack[]
@@ -28,6 +36,19 @@ model User {
   receivedRequests    Friendship[]         @relation("FriendshipRecipient")
   recommendationsSent RecommendationSent[] @relation("RecommendationSender")
   recommendationsGot  RecommendationSent[] @relation("RecommendationRecipient")
+}
+
+// A signed-in browser. The cookie holds a random token; only its SHA-256
+// hash is stored here, so a leaked database can't be used to sign in.
+// Deleting the row signs that browser out.
+model Session {
+  id        Int      @id @default(autoincrement())
+  tokenHash String   @unique
+  userId    Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // A directed friend request that becomes a mutual friendship once accepted.

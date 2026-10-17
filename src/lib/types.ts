@@ -20,6 +20,9 @@ export type SearchResult = {
   // iTunes-only signal (favors a real album over a same-titled single) —
   // absent/0 for MusicBrainz-sourced results. See searchRelevance.ts.
   trackCount?: number;
+  // Last.fm all-time play count, used to sort results most-played first.
+  // 0/absent when Last.fm has no match. See getAlbumPlaycount in lastfm.ts.
+  playcount?: number;
 };
 
 // The minimal shape needed to show an album's detail view, satisfied by

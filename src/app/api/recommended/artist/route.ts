@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mapWithConcurrency } from "@/lib/concurrency";
 import { getCurrentUserId } from "@/lib/currentUser";
-import { findITunesArtwork } from "@/lib/itunes";
 import {
-  coverArtArchiveUrl,
+  findITunesArtistId,
+  getArtistCatalog,
+  isSingleOrEp,
+  itunesArtworkProxyUrl,
+  lazyArtworkUrl,
+  oneEditionPerAlbum,
+  type ITunesAlbum,
+} from "@/lib/itunes";
+import { attachPlaycounts } from "@/lib/lastfm";
+import {
+  coverArtArchiveSrc,
   findArtistSinglesAndEps,
   findArtistStudioAlbums,
   findFeaturedSingles,
@@ -12,10 +20,9 @@ import {
   getCachedRecommendations,
   getSavedMbids,
   preferFresh,
+  savedAlbumKey,
 } from "@/lib/recommendations";
 import type { AlbumSummary } from "@/lib/types";
-
-const ARTWORK_LOOKUP_CONCURRENCY = 6;
 
 const POOL_SIZE = 18;
 // A "Refresh" fetches a wider raw hit list per tier so there's a real pool
@@ -24,9 +31,9 @@ const FETCH_LIMIT_REFRESH = 36;
 
 // GET /api/recommended/artist?artist=...[&exclude=mbid,mbid,...] — surfaces
 // the chosen artist's own catalog, not already in the library/to-do list,
-// in three tiers: their own studio albums first, then their own
-// singles/EPs, then other artists' singles/EPs where this artist appears as
-// a featured guest. Lower tiers only fill in once the higher tier runs out.
+// in three tiers: their own albums first, then their own singles/EPs, then
+// other artists' singles/EPs where this artist appears as a featured guest.
+// Lower tiers only fill in once the higher tier runs out.
 export async function GET(request: NextRequest) {
   const artist = request.nextUrl.searchParams.get("artist")?.trim();
   const excludeMbids = new Set(
@@ -42,57 +49,23 @@ export async function GET(request: NextRequest) {
 
   try {
     const userId = await getCurrentUserId();
-    const fetchLimit = isRefresh ? FETCH_LIMIT_REFRESH : POOL_SIZE;
 
     const albums = await getCachedRecommendations(
       `artist:${userId}:${artist.toLowerCase()}`,
       async () => {
-        const [studioAlbums, ownSinglesEps, featuredSingles] =
-          await Promise.all([
-            findArtistStudioAlbums(artist, fetchLimit),
-            findArtistSinglesAndEps(artist, fetchLimit),
-            findFeaturedSingles(artist, fetchLimit),
-          ]);
-
         const savedMbids = await getSavedMbids(userId);
-        const seen = new Set<string>();
-        const ranked: AlbumSummary[] = [];
-
-        function addAll(
-          hits: { id: string; title: string; leadArtist?: string }[],
-          artistLabel: (hit: { leadArtist?: string }) => string,
-        ) {
-          for (const hit of hits) {
-            if (savedMbids.has(hit.id) || seen.has(hit.id)) continue;
-            seen.add(hit.id);
-            ranked.push({
-              mbid: hit.id,
-              title: hit.title,
-              artist: artistLabel(hit),
-              coverArtUrl: coverArtArchiveUrl(hit.id),
-            });
-          }
-        }
-
-        addAll(studioAlbums, () => artist);
-        addAll(ownSinglesEps, () => artist);
-        addAll(featuredSingles, (hit) => hit.leadArtist ?? artist);
-
-        const selected = preferFresh(ranked, (a) => a.mbid, POOL_SIZE, excludeMbids);
-
-        // Only look up iTunes artwork for the albums actually being
-        // returned, not every raw hit across all three tiers — most of
-        // which preferFresh may have already discarded.
-        return mapWithConcurrency(
-          selected,
-          ARTWORK_LOOKUP_CONCURRENCY,
-          async (album) => ({
-            ...album,
-            coverArtUrl:
-              (await findITunesArtwork(album.artist, album.title)) ??
-              album.coverArtUrl,
-          }),
-        );
+        const ranked =
+          (await officialCatalogTiers(
+            artist,
+            savedMbids,
+            POOL_SIZE + excludeMbids.size,
+          )) ??
+          (await musicBrainzTiers(
+            artist,
+            isRefresh ? FETCH_LIMIT_REFRESH : POOL_SIZE,
+            savedMbids,
+          ));
+        return preferFresh(ranked, (a) => a.mbid, POOL_SIZE, excludeMbids);
       },
       { bypassCache: isRefresh },
     );
@@ -112,4 +85,99 @@ export async function GET(request: NextRequest) {
       { status: 502 },
     );
   }
+}
+
+// The three tiers, from the artist's official streaming catalog — their
+// Apple Music artist page (see getArtistCatalog). This used to come from
+// MusicBrainz text searches on the artist's name, which return everything
+// MusicBrainz has credited to them: for Eminem, bootlegs and fan compilations
+// like "Unreleased & Uncensored" and "The King Is Back" outnumbered his real
+// albums. Within each tier, most-played first (Last.fm play counts). Stops
+// once it has `needed` albums, so a lower tier nobody will see doesn't cost
+// a play-count lookup per release. Null when iTunes doesn't know the
+// artist, so the caller can fall back.
+async function officialCatalogTiers(
+  artist: string,
+  savedMbids: Set<string>,
+  needed: number,
+): Promise<AlbumSummary[] | null> {
+  const artistId = await findITunesArtistId(artist);
+  if (!artistId) return null;
+  const catalog = await getArtistCatalog(artistId, { includeFeatures: true });
+  if (catalog.length === 0) return null;
+
+  const own = catalog.filter((a) => a.artistId === artistId);
+  const tiers = [
+    own.filter((a) => !isSingleOrEp(a)),
+    own.filter(isSingleOrEp),
+    // Only others' singles/EPs — not full albums where they guest on one
+    // track.
+    catalog.filter((a) => a.artistId !== artistId && isSingleOrEp(a)),
+  ];
+
+  const ranked: AlbumSummary[] = [];
+  for (const tier of tiers) {
+    if (ranked.length >= needed) break;
+    const unsaved = oneEditionPerAlbum(tier).filter(
+      (a) =>
+        !savedMbids.has(`itunes:${a.collectionId}`) &&
+        !savedMbids.has(savedAlbumKey(a.artist, a.title)),
+    );
+    const withPlays = await attachPlaycounts(unsaved.map(toAlbumSummary));
+    ranked.push(...withPlays.sort((a, b) => b.playcount - a.playcount));
+  }
+  return ranked;
+}
+
+// Same id/artwork scheme as search results (see /api/search).
+function toAlbumSummary(album: ITunesAlbum): AlbumSummary {
+  return {
+    mbid: `itunes:${album.collectionId}`,
+    title: album.title,
+    artist: album.artist,
+    coverArtUrl: album.artworkUrl100
+      ? itunesArtworkProxyUrl(album.artworkUrl100)
+      : null,
+  };
+}
+
+// The same three tiers from MusicBrainz, for artists iTunes doesn't carry.
+async function musicBrainzTiers(
+  artist: string,
+  fetchLimit: number,
+  savedMbids: Set<string>,
+): Promise<AlbumSummary[]> {
+  const [studioAlbums, ownSinglesEps, featuredSingles] = await Promise.all([
+    findArtistStudioAlbums(artist, fetchLimit),
+    findArtistSinglesAndEps(artist, fetchLimit),
+    findFeaturedSingles(artist, fetchLimit),
+  ]);
+
+  const seen = new Set<string>();
+  const ranked: AlbumSummary[] = [];
+
+  function addAll(
+    hits: { id: string; title: string; leadArtist?: string }[],
+    artistLabel: (hit: { leadArtist?: string }) => string,
+  ) {
+    for (const hit of hits) {
+      if (savedMbids.has(hit.id) || seen.has(hit.id)) continue;
+      seen.add(hit.id);
+      ranked.push({
+        mbid: hit.id,
+        title: hit.title,
+        artist: artistLabel(hit),
+        coverArtUrl: lazyArtworkUrl(
+          artistLabel(hit),
+          hit.title,
+          coverArtArchiveSrc(hit.id),
+        ),
+      });
+    }
+  }
+
+  addAll(studioAlbums, () => artist);
+  addAll(ownSinglesEps, () => artist);
+  addAll(featuredSingles, (hit) => hit.leadArtist ?? artist);
+  return ranked;
 }

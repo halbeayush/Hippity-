@@ -2,7 +2,7 @@
 // testable before any real friends (or real deployment) exist. Safe to
 // re-run — everything is upserted, keyed off the seed data's own ids.
 import { prisma } from "../src/lib/prisma";
-import { CURRENT_USERNAME } from "../src/lib/currentUser";
+import { PLACEHOLDER_USERNAME } from "../src/lib/currentUser";
 
 type SeedAlbum = {
   mbid: string;
@@ -131,9 +131,9 @@ function currentWeekStart(): Date {
 
 async function main() {
   const me = await prisma.user.upsert({
-    where: { username: CURRENT_USERNAME },
+    where: { username: PLACEHOLDER_USERNAME },
     update: {},
-    create: { username: CURRENT_USERNAME, displayName: "You", avatarColor: "#a78bfa" },
+    create: { username: PLACEHOLDER_USERNAME, displayName: "You", avatarColor: "#a78bfa" },
   });
 
   const weekStart = currentWeekStart();
