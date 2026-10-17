@@ -57,6 +57,11 @@ export async function fetchMusicBrainz(
     if (response.status !== 503 || attempt === MUSICBRAINZ_MAX_ATTEMPTS) {
       return response;
     }
+    // Logged so the deployment's runtime logs show how often MusicBrainz
+    // turns this server's IP away (shared datacenter IPs get it far more).
+    console.warn(
+      `MusicBrainz 503 (attempt ${attempt}/${MUSICBRAINZ_MAX_ATTEMPTS}): ${musicBrainzUrl.pathname}`,
+    );
   }
 }
 

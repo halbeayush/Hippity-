@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { createTtlCache } from "./apiCache";
+import { createPersistedLoader } from "./persistentCache";
 import type { NewsItem } from "./types";
 
 // A small set of well-established music publications with reliable public
@@ -24,11 +24,9 @@ const TOTAL_LIMIT = 16;
 const EXCERPT_MAX_LENGTH = 200;
 // Refetching five publications' feeds on every Home page load would hammer
 // them for no benefit — headlines don't change minute to minute — so the
-// merged result is cached here and only actually refreshed on this cadence.
+// merged result is cached (in Postgres, so every instance and each new
+// deploy shares it) and only actually refreshed on this cadence.
 const CACHE_TTL_MS = 45 * 60 * 1000;
-
-const cache = createTtlCache<NewsItem[]>(CACHE_TTL_MS);
-const CACHE_KEY = "merged";
 
 // htmlEntities also decodes numeric character references (e.g. &#8217;)
 // that show up inline in titles — without it those come through literally
@@ -166,10 +164,7 @@ async function fetchFeed(source: string, url: string): Promise<NewsItem[]> {
   }
 }
 
-export async function getMusicNews(): Promise<NewsItem[]> {
-  const cached = cache.get(CACHE_KEY);
-  if (cached) return cached;
-
+async function fetchMusicNews(): Promise<NewsItem[]> {
   const perFeed = await Promise.all(
     FEEDS.map((feed) => fetchFeed(feed.source, feed.url)),
   );
@@ -180,7 +175,14 @@ export async function getMusicNews(): Promise<NewsItem[]> {
     return +new Date(b.publishedAt) - +new Date(a.publishedAt);
   });
 
-  const items = merged.slice(0, TOTAL_LIMIT);
-  cache.set(CACHE_KEY, items);
-  return items;
+  // Every feed failing (each fails soft to []) is an outage, not "no news":
+  // throwing keeps the last good headlines instead of saving an empty row.
+  if (merged.length === 0) throw new Error("every music news feed failed");
+  return merged.slice(0, TOTAL_LIMIT);
 }
+
+export const getMusicNews = createPersistedLoader(
+  "home-music-news",
+  CACHE_TTL_MS,
+  fetchMusicNews,
+);

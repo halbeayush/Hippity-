@@ -147,3 +147,13 @@ model RecommendationSent {
   sender    User @relation("RecommendationSender", fields: [senderId], references: [id], onDelete: Cascade)
   recipient User @relation("RecommendationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
 }
+
+// A route's last good result, kept so a cold serverless instance or a fresh
+// deploy can answer straight away and refresh in the background, instead of
+// the first visitor waiting through a full scrape. One row per cached thing
+// (e.g. "home-upcoming"); see src/lib/persistentCache.ts.
+model CacheEntry {
+  key       String   @id
+  value     Json
+  updatedAt DateTime
+}

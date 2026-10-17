@@ -8,9 +8,8 @@ import {
   type ReleaseGroupSearchHit,
 } from "@/lib/musicbrainz";
 import {
-  readPersisted,
+  createPersistedLoader,
   SHARED_ROW_CACHE_HEADERS,
-  writePersisted,
 } from "@/lib/persistentCache";
 import type { HomeAlbum } from "@/lib/types";
 
@@ -42,8 +41,6 @@ const CACHE_TTL_MS = 45 * 60 * 1000;
 // release-date data instead, same as the Upcoming albums row but searching
 // the last 14 days instead of the next 90. Each artist's Last.fm listener
 // count stands in for the old popularity score to rank the results.
-let cache: { at: number; albums: HomeAlbum[] } | null = null;
-
 function windowFor(days: number) {
   const today = new Date();
   const since = new Date(today);
@@ -52,114 +49,76 @@ function windowFor(days: number) {
   return { sinceStr: format(since), todayStr: format(today) };
 }
 
-// Requests that arrive while a refresh is already running (page 0 and a
-// quick "next page" click, StrictMode's double effect in dev, a reload) wait
-// on that same refresh instead of each kicking off their own full scrape.
-let inFlight: Promise<HomeAlbum[]> | null = null;
-
-// The last good batch, saved to disk so a server restart can serve it
-// straight away (stale is fine — it refreshes in the background, below)
-// instead of the first visit waiting on a full scrape. See persistentCache.ts.
-const PERSIST_NAME = "home-new-releases";
-let restoring: Promise<void> | null = null;
-
-async function loadCandidates(): Promise<HomeAlbum[]> {
-  restoring ??= readPersisted<HomeAlbum[]>(PERSIST_NAME).then((saved) => {
-    if (saved && !cache) cache = { at: saved.at, albums: saved.value };
-  });
-  await restoring;
-
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) {
-    return Promise.resolve(cache.albums);
-  }
-  inFlight ??= refreshCandidates().finally(() => {
-    inFlight = null;
-  });
-  // Past its refresh window, the last batch is still served immediately
-  // while the refresh above runs in the background — otherwise whoever
-  // visits first after it expires waits through a full ~7s scrape. Only
-  // the very first load (nothing cached yet) waits on the scrape itself.
-  if (cache) {
-    inFlight.catch(() => {});
-    return Promise.resolve(cache.albums);
-  }
-  return inFlight;
-}
-
 async function refreshCandidates(): Promise<HomeAlbum[]> {
-  try {
-    const { sinceStr, todayStr } = windowFor(NEW_RELEASE_WINDOW_DAYS);
-    let releaseGroups = await searchReleaseGroupsInDateWindow(sinceStr, todayStr, {
-      targetCount: TARGET_POOL_SIZE,
-      maxPages: SEARCH_MAX_PAGES,
-    });
+  const { sinceStr, todayStr } = windowFor(NEW_RELEASE_WINDOW_DAYS);
+  let releaseGroups = await searchReleaseGroupsInDateWindow(sinceStr, todayStr, {
+    targetCount: TARGET_POOL_SIZE,
+    maxPages: SEARCH_MAX_PAGES,
+  });
 
-    if (releaseGroups.length < MIN_REQUIRED) {
-      const widened = windowFor(WIDENED_WINDOW_DAYS);
-      const more = await searchReleaseGroupsInDateWindow(
-        widened.sinceStr,
-        todayStr,
-        { targetCount: TARGET_POOL_SIZE, maxPages: WIDENED_SEARCH_MAX_PAGES },
-      );
-      const seen = new Set(releaseGroups.map((rg) => rg.id));
-      releaseGroups = [
-        ...releaseGroups,
-        ...more.filter((rg) => !seen.has(rg.id)),
-      ];
-    }
-
-    const withListeners = await mapWithConcurrency(
-      releaseGroups,
-      LISTENERS_LOOKUP_CONCURRENCY,
-      async (rg: ReleaseGroupSearchHit) => {
-        const artist =
-          rg["artist-credit"]
-            ?.map((c) => `${c.name}${c.joinphrase ?? ""}`)
-            .join("")
-            .trim() ?? "Unknown artist";
-
-        const listeners = await getArtistListeners(artist);
-
-        return {
-          mbid: rg.id,
-          title: rg.title,
-          artist,
-          // Resolved per image when the browser requests it, not here —
-          // see lazyArtworkUrl in itunes.ts.
-          coverArtUrl: lazyArtworkUrl(artist, rg.title, coverArtArchiveSrc(rg.id)),
-          releaseDate: rg["first-release-date"]!,
-          listeners,
-        };
-      },
+  if (releaseGroups.length < MIN_REQUIRED) {
+    const widened = windowFor(WIDENED_WINDOW_DAYS);
+    const more = await searchReleaseGroupsInDateWindow(
+      widened.sinceStr,
+      todayStr,
+      { targetCount: TARGET_POOL_SIZE, maxPages: WIDENED_SEARCH_MAX_PAGES },
     );
-
-    withListeners.sort((a, b) => b.listeners - a.listeners);
-
-    const albums: HomeAlbum[] = withListeners.map((album) => ({
-      mbid: album.mbid,
-      title: album.title,
-      artist: album.artist,
-      coverArtUrl: album.coverArtUrl,
-      releaseDate: album.releaseDate,
-    }));
-
-    cache = { at: Date.now(), albums };
-    void writePersisted(PERSIST_NAME, albums);
-    return albums;
-  } catch (err) {
-    // A fresh refresh can fail for reasons that have nothing to do with
-    // this row's own data being wrong — MusicBrainz rate-limiting or a
-    // transient outage, most commonly. Serving the last successful batch
-    // (even past its normal refresh window) beats a hard error for
-    // something that updates at most a few times a day; a real error only
-    // surfaces if nothing has ever loaded successfully yet.
-    if (cache) {
-      console.error("new-releases refresh failed, serving stale cache", err);
-      return cache.albums;
-    }
-    throw err;
+    const seen = new Set(releaseGroups.map((rg) => rg.id));
+    releaseGroups = [
+      ...releaseGroups,
+      ...more.filter((rg) => !seen.has(rg.id)),
+    ];
   }
+
+  const withListeners = await mapWithConcurrency(
+    releaseGroups,
+    LISTENERS_LOOKUP_CONCURRENCY,
+    async (rg: ReleaseGroupSearchHit) => {
+      const artist =
+        rg["artist-credit"]
+          ?.map((c) => `${c.name}${c.joinphrase ?? ""}`)
+          .join("")
+          .trim() ?? "Unknown artist";
+
+      const listeners = await getArtistListeners(artist);
+
+      return {
+        mbid: rg.id,
+        title: rg.title,
+        artist,
+        // Resolved per image when the browser requests it, not here —
+        // see lazyArtworkUrl in itunes.ts.
+        coverArtUrl: lazyArtworkUrl(artist, rg.title, coverArtArchiveSrc(rg.id)),
+        releaseDate: rg["first-release-date"]!,
+        listeners,
+      };
+    },
+  );
+
+  withListeners.sort((a, b) => b.listeners - a.listeners);
+
+  const albums: HomeAlbum[] = withListeners.map((album) => ({
+    mbid: album.mbid,
+    title: album.title,
+    artist: album.artist,
+    coverArtUrl: album.coverArtUrl,
+    releaseDate: album.releaseDate,
+  }));
+
+  return albums;
 }
+
+// The last good batch lives in Postgres, so a cold instance or a fresh
+// deploy serves it straight away (stale is fine — it refreshes in the
+// background) instead of the first visit waiting on a full scrape. A failed
+// refresh — MusicBrainz rate-limiting or a transient outage, most commonly —
+// keeps serving the last good batch; a real error only surfaces if nothing
+// has ever loaded successfully. See createPersistedLoader.
+const loadCandidates = createPersistedLoader(
+  "home-new-releases",
+  CACHE_TTL_MS,
+  refreshCandidates,
+);
 
 export async function GET(request: NextRequest) {
   const page = Number(request.nextUrl.searchParams.get("page") ?? "0");
