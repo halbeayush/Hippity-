@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { findITunesArtworkSource } from "@/lib/itunes";
 import { getAlbumInfo } from "@/lib/lastfm";
 import { CACHE_ROOT } from "@/lib/persistentCache";
@@ -184,21 +184,39 @@ function warmCacheInBackground(src: string): void {
   if (warming.has(src)) return;
   warming.add(src);
 
-  (async () => {
-    for (let attempt = 0; attempt < BACKGROUND_ATTEMPTS; attempt++) {
-      const result = await fetchOnce(src, BACKGROUND_TIMEOUT_MS);
-      if (result) {
-        await writeToCache(src, result.data, result.contentType);
-        break;
+  // after() keeps the function alive until this finishes — on Vercel a
+  // function is frozen once its response is sent, so a plain floating
+  // promise would never get to retry.
+  after(async () => {
+    try {
+      for (let attempt = 0; attempt < BACKGROUND_ATTEMPTS; attempt++) {
+        const result = await fetchOnce(src, BACKGROUND_TIMEOUT_MS);
+        if (result) {
+          await writeToCache(src, result.data, result.contentType);
+          break;
+        }
+        if (attempt < BACKGROUND_ATTEMPTS - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+        }
       }
-      if (attempt < BACKGROUND_ATTEMPTS - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
-      }
+    } finally {
+      warming.delete(src);
     }
-    warming.delete(src);
-  })().catch(() => {
-    warming.delete(src);
   });
+}
+
+// A miss is cached by the CDN (not the browser) for an hour, so a cover
+// that doesn't exist — common for brand-new and upcoming releases — isn't
+// looked up again through every slow source on every visit. An hour, not
+// a year: the miss may have been a timeout, or the art may be added soon.
+function notFoundResponse() {
+  return NextResponse.json(
+    { error: "Cover art not found" },
+    {
+      status: 404,
+      headers: { "Cache-Control": "public, max-age=0, s-maxage=3600" },
+    },
+  );
 }
 
 function imageResponse(image: { data: Buffer; contentType: string }) {
@@ -254,7 +272,7 @@ async function lazyArtwork(
     warmCacheInBackground(src);
   }
 
-  return NextResponse.json({ error: "Cover art not found" }, { status: 404 });
+  return notFoundResponse();
 }
 
 export async function GET(request: NextRequest) {
@@ -299,7 +317,7 @@ export async function GET(request: NextRequest) {
     // background so a later request (a reload, a revisit) has a good
     // chance of finding it cached instead of repeating this same wait.
     warmCacheInBackground(src);
-    return NextResponse.json({ error: "Cover art not found" }, { status: 404 });
+    return notFoundResponse();
   }
 
   await writeToCache(src, result.data, result.contentType);
