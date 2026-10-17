@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMusicNews } from "@/lib/musicNews";
+import { SHARED_ROW_CACHE_HEADERS } from "@/lib/persistentCache";
 
 // GET /api/home/music-news — recent headlines from a small set of music
 // publications' RSS feeds, merged and most recent first. See musicNews.ts
@@ -7,7 +8,7 @@ import { getMusicNews } from "@/lib/musicNews";
 export async function GET() {
   try {
     const items = await getMusicNews();
-    return NextResponse.json({ items });
+    return NextResponse.json({ items }, { headers: SHARED_ROW_CACHE_HEADERS });
   } catch (err) {
     console.error("music news lookup failed", err);
     return NextResponse.json(

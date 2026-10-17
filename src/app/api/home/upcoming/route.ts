@@ -10,7 +10,11 @@ import {
   type ReleaseGroupSearchHit,
 } from "@/lib/musicbrainz";
 import { PRIORITY_BACKGROUND } from "@/lib/pacedQueue";
-import { readPersisted, writePersisted } from "@/lib/persistentCache";
+import {
+  readPersisted,
+  SHARED_ROW_CACHE_HEADERS,
+  writePersisted,
+} from "@/lib/persistentCache";
 import type { HomeAlbum } from "@/lib/types";
 
 const PAGE_SIZE = 5;
@@ -249,7 +253,10 @@ export async function GET(request: NextRequest) {
     const start = page * PAGE_SIZE;
     const albums = candidates.slice(start, start + PAGE_SIZE);
     const hasMore = start + PAGE_SIZE < candidates.length;
-    return NextResponse.json({ albums, hasMore });
+    return NextResponse.json(
+      { albums, hasMore },
+      { headers: SHARED_ROW_CACHE_HEADERS },
+    );
   } catch (err) {
     console.error("upcoming lookup failed", err);
     return NextResponse.json(

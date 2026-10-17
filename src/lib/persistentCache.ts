@@ -37,3 +37,14 @@ export async function writePersisted<T>(name: string, value: T): Promise<void> {
     // See above — best effort.
   }
 }
+
+// For the home rows' successful responses, which are the same for every
+// visitor. On Vercel each serverless instance has its own in-memory and
+// /tmp cache, so a request landing on a fresh instance would otherwise wait
+// through a full several-second scrape. With this, Vercel's CDN keeps one
+// copy for everyone for 45 minutes (matching the routes' own refresh
+// window), then keeps serving it while refreshing in the background.
+// Browsers don't cache it (max-age=0), so a reload still gets the CDN's copy.
+export const SHARED_ROW_CACHE_HEADERS = {
+  "Cache-Control": "public, max-age=0, s-maxage=2700, stale-while-revalidate=86400",
+};
