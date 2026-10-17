@@ -32,28 +32,48 @@ const MUSICBRAINZ_REQUEST_INTERVAL_MS = 1100;
 const paced = createPacedQueue(MUSICBRAINZ_REQUEST_INTERVAL_MS);
 const MUSICBRAINZ_MAX_ATTEMPTS = 3;
 
-// MusicBrainz still answers 503 now and then when it's busy overall, and
-// recovers within a request or two — each retry goes back through the
-// queue, which spaces it out like any other request.
+// Background work (the home rows' scrape) has nobody waiting on each
+// request, and from a datacenter IP MusicBrainz is often slower than from
+// home, so it gets a longer per-attempt budget than interactive lookups.
+const MUSICBRAINZ_BACKGROUND_TIMEOUT_MS = 5000;
+
+// MusicBrainz still answers 503 now and then when it's busy overall (and
+// far more often to shared datacenter IPs like Vercel's), and recovers
+// within a request or two. A timed-out or dropped request is retried the
+// same way — before, one of those threw straight out and failed a whole
+// home-row scrape. Each retry goes back through the queue, which spaces it
+// out like any other request.
 export async function fetchMusicBrainz(
   musicBrainzUrl: URL,
   {
     priority = PRIORITY_INTERACTIVE,
-    timeoutMs = MUSICBRAINZ_TIMEOUT_MS,
+    timeoutMs = priority === PRIORITY_BACKGROUND
+      ? MUSICBRAINZ_BACKGROUND_TIMEOUT_MS
+      : MUSICBRAINZ_TIMEOUT_MS,
   }: { priority?: number; timeoutMs?: number } = {},
 ): Promise<Response> {
   for (let attempt = 1; ; attempt++) {
-    const response = await paced(
-      () =>
-        fetch(musicBrainzUrl, {
-          headers: {
-            "User-Agent": MUSICBRAINZ_USER_AGENT,
-            Accept: "application/json",
-          },
-          signal: AbortSignal.timeout(timeoutMs),
-        }),
-      priority,
-    );
+    let response: Response;
+    try {
+      response = await paced(
+        () =>
+          fetch(musicBrainzUrl, {
+            headers: {
+              "User-Agent": MUSICBRAINZ_USER_AGENT,
+              Accept: "application/json",
+            },
+            signal: AbortSignal.timeout(timeoutMs),
+          }),
+        priority,
+      );
+    } catch (err) {
+      if (attempt === MUSICBRAINZ_MAX_ATTEMPTS) throw err;
+      // Logged so the deployment's runtime logs show how often this happens.
+      console.warn(
+        `MusicBrainz ${err instanceof Error ? err.name : "error"} (attempt ${attempt}/${MUSICBRAINZ_MAX_ATTEMPTS}): ${musicBrainzUrl.pathname}`,
+      );
+      continue;
+    }
     if (response.status !== 503 || attempt === MUSICBRAINZ_MAX_ATTEMPTS) {
       return response;
     }
@@ -100,7 +120,7 @@ export async function searchReleaseGroupsInDateWindow(
   // one page shouldn't sink the whole pool: on error/timeout, this stops
   // paginating and returns whatever was already found instead of throwing,
   // so a slow moment degrades to "fewer candidates" rather than "none".
-  const SEARCH_TIMEOUT_MS = 4000;
+  const SEARCH_TIMEOUT_MS = 10000;
 
   for (let page = 0; page < maxPages; page++) {
     const url = new URL("https://musicbrainz.org/ws/2/release-group/");
