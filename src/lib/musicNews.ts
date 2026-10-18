@@ -6,13 +6,19 @@ import type { NewsItem } from "./types";
 // RSS feeds. Each is checked directly (see the investigation in git
 // history) rather than assumed — a publication swapping feed URLs shows up
 // as that source silently dropping out (fetchFeed fails soft), not a crash.
+//
+// Listed most reliable first: when several cover the same story, the row
+// keeps the earliest one here (see dedupeStories). Billboard is the
+// industry's trade paper of record, Rolling Stone and Pitchfork have
+// long-standing newsrooms, and NME leans most toward tabloid-style
+// headlines, so it goes last.
 const FEEDS: { source: string; url: string }[] = [
-  { source: "Pitchfork", url: "https://pitchfork.com/rss/news/" },
   { source: "Billboard", url: "https://www.billboard.com/feed/" },
   {
     source: "Rolling Stone",
     url: "https://www.rollingstone.com/music/music-news/feed/",
   },
+  { source: "Pitchfork", url: "https://pitchfork.com/rss/news/" },
   { source: "Stereogum", url: "https://www.stereogum.com/feed/" },
   { source: "NME", url: "https://www.nme.com/news/music/feed" },
 ];
@@ -164,16 +170,74 @@ async function fetchFeed(source: string, url: string): Promise<NewsItem[]> {
   }
 }
 
+// Words too common in headlines to say two of them are about the same thing.
+const HEADLINE_STOPWORDS = new Set([
+  "the", "and", "for", "with", "from", "that", "this", "his", "her", "their",
+  "its", "new", "after", "about", "into", "over", "out", "has", "have", "are",
+  "was", "will", "your", "you", "all", "but", "not", "just", "now", "how",
+  "why", "what", "who", "says", "say", "watch", "listen", "hear", "video",
+]);
+
+// A headline's distinctive words: accents, punctuation, possessive "s" and
+// filler dropped, so "Beyoncé's" and "Beyonce" match.
+function headlineWords(title: string): Set<string> {
+  return new Set(
+    title
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .toLowerCase()
+      .replace(/['’]s\b/g, "")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !HEADLINE_STOPWORDS.has(w)),
+  );
+}
+
+// Two outlets' headlines for one story share most of their distinctive
+// words ("Taylor Swift Announces New Album 'The Life of a Showgirl'" /
+// "Taylor Swift Unveils The Life of a Showgirl"). Requiring 3+ shared words
+// keeps two different stories about the same artist ("Taylor Swift
+// announces tour" / "Taylor Swift breaks record") apart.
+const MIN_SHARED_WORDS = 3;
+const MIN_SHARED_FRACTION = 0.5;
+
+function sameStory(a: Set<string>, b: Set<string>): boolean {
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  return (
+    shared >= MIN_SHARED_WORDS &&
+    shared / Math.min(a.size, b.size) >= MIN_SHARED_FRACTION
+  );
+}
+
+// One item per story, from the most reliable outlet that covered it — FEEDS
+// order — then newest first. Also drops a feed repeating its own link.
+function dedupeStories(perFeed: NewsItem[][]): NewsItem[] {
+  const kept: { item: NewsItem; words: Set<string> }[] = [];
+  const links = new Set<string>();
+  for (const item of perFeed.flat()) {
+    if (links.has(item.link)) continue;
+    const words = headlineWords(item.title);
+    if (kept.some((k) => sameStory(k.words, words))) continue;
+    links.add(item.link);
+    kept.push({ item, words });
+  }
+  return kept
+    .map((k) => k.item)
+    .sort((a, b) => {
+      if (!a.publishedAt) return 1;
+      if (!b.publishedAt) return -1;
+      return +new Date(b.publishedAt) - +new Date(a.publishedAt);
+    });
+}
+
 async function fetchMusicNews(): Promise<NewsItem[]> {
+  // Promise.all keeps FEEDS order, which dedupeStories relies on.
   const perFeed = await Promise.all(
     FEEDS.map((feed) => fetchFeed(feed.source, feed.url)),
   );
 
-  const merged = perFeed.flat().sort((a, b) => {
-    if (!a.publishedAt) return 1;
-    if (!b.publishedAt) return -1;
-    return +new Date(b.publishedAt) - +new Date(a.publishedAt);
-  });
+  const merged = dedupeStories(perFeed);
 
   // Every feed failing (each fails soft to []) is an outage, not "no news":
   // throwing keeps the last good headlines instead of saving an empty row.
