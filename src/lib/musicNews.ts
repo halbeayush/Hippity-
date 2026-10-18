@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { mapWithConcurrency } from "./concurrency";
 import { createPersistedLoader } from "./persistentCache";
 import type { NewsItem } from "./types";
 
@@ -231,6 +232,42 @@ function dedupeStories(perFeed: NewsItem[][]): NewsItem[] {
     });
 }
 
+const ARTICLE_TIMEOUT_MS = 5000;
+const ARTICLE_LOOKUP_CONCURRENCY = 6;
+
+// The article's own preview image — the og:image every news site declares
+// for link previews on social media. Null on any failure.
+async function articleImage(link: string): Promise<string | null> {
+  try {
+    const response = await fetch(link, {
+      headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
+      signal: AbortSignal.timeout(ARTICLE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const html = await response.text();
+    // Either attribute order: <meta property="og:image" content="...">.
+    const tag = html.match(/<meta[^>]+(?:property|name)=["']og:image["'][^>]*>/i)?.[0];
+    const url = tag?.match(/content=["']([^"']+)["']/i)?.[1];
+    if (!url) return null;
+    const absolute = new URL(decodeHtmlEntities(url), link);
+    return absolute.protocol === "https:" ? absolute.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Rolling Stone's feed carries no images at all and Billboard's only some,
+// so a story without one gets its article's preview image instead. Only
+// the stories actually shown are looked up, and the result is cached with
+// the rest of the row (see CACHE_TTL_MS).
+function withThumbnails(items: NewsItem[]): Promise<NewsItem[]> {
+  return mapWithConcurrency(items, ARTICLE_LOOKUP_CONCURRENCY, async (item) =>
+    item.thumbnailUrl
+      ? item
+      : { ...item, thumbnailUrl: await articleImage(item.link) },
+  );
+}
+
 async function fetchMusicNews(): Promise<NewsItem[]> {
   // Promise.all keeps FEEDS order, which dedupeStories relies on.
   const perFeed = await Promise.all(
@@ -242,7 +279,7 @@ async function fetchMusicNews(): Promise<NewsItem[]> {
   // Every feed failing (each fails soft to []) is an outage, not "no news":
   // throwing keeps the last good headlines instead of saving an empty row.
   if (merged.length === 0) throw new Error("every music news feed failed");
-  return merged.slice(0, TOTAL_LIMIT);
+  return withThumbnails(merged.slice(0, TOTAL_LIMIT));
 }
 
 export const getMusicNews = createPersistedLoader(
