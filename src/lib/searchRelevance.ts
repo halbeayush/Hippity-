@@ -48,16 +48,18 @@ export function relevanceScore(
 // city (Deluxe Version)" -> "good kid, m.A.A.d city", "Not Like Us -
 // Single" -> "Not Like Us", "The Death of Slim Shady (Coup De Grâce):
 // Expanded Mourner's Edition" -> "The Death of Slim Shady (Coup De Grâce)",
-// "DAMN. COLLECTORS EDITION." -> "DAMN.".
+// "DAMN. COLLECTORS EDITION." -> "DAMN.". Every bracketed edition tag goes,
+// wherever it sits: "Thriller (25th Anniversary) [Deluxe Edition]" ->
+// "Thriller", "1962–1966 (2023 Edition) [The Red Album]" -> "1962–1966 [The
+// Red Album]".
 export function baseAlbumTitle(title: string): string {
   return (
     title
       .replace(/\s+-\s+(Single|EP)$/i, "")
-      // A bracketed edition tag first, so "Curtain Call: The Hits (Deluxe
+      // Bracketed edition tags first, so "Curtain Call: The Hits (Deluxe
       // Edition)" isn't mistaken for a ": ... Edition" suffix below.
-      .replace(
-        /\s*[([][^)\]]*(deluxe|edition|version|remaster|expanded|anniversary|bonus|explicit|clean)[^)\]]*[)\]]\s*$/i,
-        "",
+      .replace(BRACKETED, (tag, inside: string) =>
+        EDITION_TAG.test(inside) && !NOT_AN_EDITION.test(inside) ? "" : tag,
       )
       .replace(/\s*:\s*[^:]*\bedition\b[^:]*$/i, "")
       .replace(
@@ -68,14 +70,26 @@ export function baseAlbumTitle(title: string): string {
   );
 }
 
+const BRACKETED = /\s*[([]([^)\]]*)[)\]]/g;
+// "(2019 Mix)" is Abbey Road's remixed edition; a named remix ("(Steve Aoki
+// Remix)") is a different release, so only a year + mix counts. A tag
+// starting with "+" lists extras ("(+ A Message from Taylor)").
+const EDITION_TAG =
+  /deluxe|edition|version|remaster|expanded|anniversary|bonus|explicit|clean|special|\b\d{4} (re)?mix\b|^\s*\+/i;
+// Re-recordings are albums of their own, not editions of the original.
+const NOT_AN_EDITION = /taylor['’]?s version/i;
+
 // Filler words a query can include without the album containing them
 // ("a good kid maad city", "the dark side of the moon").
 const STOPWORDS = new Set(["a", "an", "the", "and", "of", "&"]);
 
-// Lowercased whole words with punctuation dropped, so "m.A.A.d" -> "maad"
-// and "kid," -> "kid" — how people actually type album titles.
+// Lowercased whole words with punctuation and accents dropped, so "m.A.A.d"
+// -> "maad", "kid," -> "kid" and "Beyoncé" -> "beyonce" — how people
+// actually type album titles.
 function words(text: string): string[] {
   return text
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, "")
     .split(/\s+/)
@@ -124,15 +138,21 @@ export function compareSearchResults(query: string) {
 // iTunes lists standard and deluxe editions separately, so without this one
 // search could show the same album five times. Variants match on artist +
 // edition-stripped title, compared word-for-word without punctuation.
-// A title's words with a leading "the" dropped — "Slim Shady LP" and "The
-// Slim Shady LP" are the same album.
+// A title's words without "the" — "Slim Shady LP" and "The Slim Shady LP",
+// or "(White Album)" and "(The White Album)", are the same album — and
+// without "and", since "&" is already dropped ("Simon & Garfunkel" vs
+// "Simon and Garfunkel"). A name that's nothing but those ("The The")
+// keeps them.
 function titleWords(title: string): string[] {
-  const w = words(title);
-  return w[0] === "the" && w.length > 1 ? w.slice(1) : w;
+  const all = words(title);
+  const w = all.filter((word) => word !== "the" && word !== "and");
+  return w.length > 0 ? w : all;
 }
 
+// The same for artist credits, so "The Beatles", "Beatles" and "Beatles,
+// The" are one artist.
 export function creditKey(artist: string): string {
-  return words(artist).join(" ");
+  return titleWords(artist).join(" ");
 }
 
 export function titleKey(title: string): string {
