@@ -47,7 +47,7 @@ const GENRES = [
 const VISIBLE_COUNT = 12;
 
 export default function RecommendedPage() {
-  const { albumStatusByMbid, handleAddAlbum } = useAlbums();
+  const { statusFor, handleAddAlbum } = useAlbums();
   const [mode, setMode] = useState<Mode>("library");
 
   const [artistQuery, setArtistQuery] = useState("");
@@ -321,7 +321,7 @@ export default function RecommendedPage() {
             <RecommendedAlbumCard
               key={album.mbid}
               album={album}
-              status={albumStatusByMbid[album.mbid]}
+              status={statusFor(album)}
               addingStatus={
                 addingKey === `${album.mbid}:library`
                   ? "library"
@@ -340,7 +340,7 @@ export default function RecommendedPage() {
       {detailAlbum && (
         <AlbumDetailModal
           album={detailAlbum}
-          status={albumStatusByMbid[detailAlbum.mbid]}
+          status={statusFor(detailAlbum)}
           onAdd={(status) => handleAdd(detailAlbum, status)}
           onClose={() => setDetailAlbum(null)}
         />

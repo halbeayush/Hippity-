@@ -4,8 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { announceCoverAdded } from "@/lib/coverEvents";
 import type { Album, SearchResult } from "@/lib/types";
 import { apiFetch, readJson } from "@/lib/apiFetch";
+import { albumVariantKey } from "@/lib/searchRelevance";
 
 type Status = "queue" | "library";
+
+// Enough of an album to tell whether it's already saved (see statusFor).
+export type SavedAlbumKey = { mbid: string; artist: string; title: string };
 
 // Shared by the Library and To-do pages: both list saved albums and both
 // need to add/remove/rate/note them the same way the single-page app did.
@@ -75,15 +79,26 @@ export function useAlbums() {
     });
   }
 
-  const albumStatusByMbid: Record<string, Status> = {};
-  for (const album of queue) albumStatusByMbid[album.mbid] = "queue";
-  for (const album of library) albumStatusByMbid[album.mbid] = "library";
+  // Whether an album is already saved, and where. The same album carries a
+  // different id depending on where it was found ("itunes:…" from search, a
+  // MusicBrainz id from the home rows, "lastfm:…" from Recommended), so it's
+  // matched by id or by artist + edition-stripped title — otherwise one
+  // found a second way would offer "Add" again. Library wins over to-do.
+  const byMbid = new Map<string, Status>();
+  const byVariant = new Map<string, Status>();
+  for (const album of [...queue, ...library]) {
+    const status: Status = album.status === "library" ? "library" : "queue";
+    byMbid.set(album.mbid, status);
+    byVariant.set(albumVariantKey(album.artist, album.title), status);
+  }
+  const statusFor = (album: SavedAlbumKey): Status | undefined =>
+    byMbid.get(album.mbid) ?? byVariant.get(albumVariantKey(album.artist, album.title));
 
   return {
     library,
     queue,
     loading,
-    albumStatusByMbid,
+    statusFor,
     handleAddAlbum,
     handleMarkListened,
     handleRemove,

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { SearchResult } from "@/lib/types";
+import type { SavedAlbumKey } from "@/lib/useAlbums";
 import { useAlbumSearch } from "@/lib/useAlbumSearch";
 import AlbumDetailModal from "./AlbumDetailModal";
 import CoverImage from "./CoverImage";
@@ -11,11 +12,11 @@ type SaveStatus = "queue" | "library";
 export default function SearchOverlay({
   onClose,
   onAdd,
-  albumStatusByMbid,
+  statusFor,
 }: {
   onClose: () => void;
   onAdd: (result: SearchResult, status: SaveStatus) => Promise<void>;
-  albumStatusByMbid: Record<string, SaveStatus>;
+  statusFor: (album: SavedAlbumKey) => SaveStatus | undefined;
 }) {
   const [query, setQuery] = useState("");
   const { results, loading, error } = useAlbumSearch(query);
@@ -66,7 +67,7 @@ export default function SearchOverlay({
           )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {results.map((result) => {
-              const savedStatus = albumStatusByMbid[result.mbid];
+              const savedStatus = statusFor(result);
               const inLibrary = savedStatus === "library";
               const inTodo = savedStatus === "queue";
               const addingTodo = addingKey === `${result.mbid}:queue`;
@@ -128,7 +129,7 @@ export default function SearchOverlay({
       {detailResult && (
         <AlbumDetailModal
           album={detailResult}
-          status={albumStatusByMbid[detailResult.mbid]}
+          status={statusFor(detailResult)}
           onAdd={(status) => handleAdd(detailResult, status)}
           onClose={() => setDetailResult(null)}
         />

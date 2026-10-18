@@ -39,7 +39,7 @@ export default function FriendProfile({ username }: { username: string }) {
   const { library, queue, loading } = useFriendAlbums(profile?.id ?? null);
   // The friend's own view is read-only, but tapping into an album detail
   // still lets *you* save it to your own lists — same as Library/To-do.
-  const { albumStatusByMbid, handleAddAlbum } = useAlbums();
+  const { statusFor, handleAddAlbum } = useAlbums();
 
   if (notFound) {
     return (
@@ -138,7 +138,7 @@ export default function FriendProfile({ username }: { username: string }) {
       {detailAlbum && (
         <AlbumDetailModal
           album={detailAlbum}
-          status={albumStatusByMbid[detailAlbum.mbid]}
+          status={statusFor(detailAlbum)}
           onAdd={(status) =>
             handleAddAlbum(
               {

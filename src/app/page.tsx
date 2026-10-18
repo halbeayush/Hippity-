@@ -6,7 +6,7 @@ import TopNav from "@/components/TopNav";
 import { useAlbums } from "@/lib/useAlbums";
 
 export default function Home() {
-  const { albumStatusByMbid, handleAddAlbum } = useAlbums();
+  const { statusFor, handleAddAlbum } = useAlbums();
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6">
@@ -17,14 +17,14 @@ export default function Home() {
           title="New releases"
           apiPath="/api/home/new-releases"
           variant="new"
-          albumStatusByMbid={albumStatusByMbid}
+          statusFor={statusFor}
           onAdd={handleAddAlbum}
         />
         <HomeCarousel
           title="Upcoming albums"
           apiPath="/api/home/upcoming"
           variant="upcoming"
-          albumStatusByMbid={albumStatusByMbid}
+          statusFor={statusFor}
           onAdd={handleAddAlbum}
         />
         <MusicNews />

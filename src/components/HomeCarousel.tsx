@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { HomeAlbum, SearchResult } from "@/lib/types";
+import type { SavedAlbumKey } from "@/lib/useAlbums";
 import AlbumDetailModal from "./AlbumDetailModal";
 import CoverImage, { COVER_LOADING_CLASS } from "./CoverImage";
 import { apiFetch, readJson } from "@/lib/apiFetch";
@@ -73,13 +74,13 @@ export default function HomeCarousel({
   title,
   apiPath,
   variant,
-  albumStatusByMbid,
+  statusFor,
   onAdd,
 }: {
   title: string;
   apiPath: string;
   variant: "new" | "upcoming";
-  albumStatusByMbid: Record<string, SaveStatus>;
+  statusFor: (album: SavedAlbumKey) => SaveStatus | undefined;
   onAdd: (result: SearchResult, status: SaveStatus) => Promise<void>;
 }) {
   const [page, setPage] = useState(0);
@@ -185,7 +186,7 @@ export default function HomeCarousel({
       {detailAlbum && (
         <AlbumDetailModal
           album={detailAlbum}
-          status={albumStatusByMbid[detailAlbum.mbid]}
+          status={statusFor(detailAlbum)}
           onAdd={(status) =>
             onAdd(
               {

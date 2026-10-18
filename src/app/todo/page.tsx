@@ -12,7 +12,7 @@ export default function TodoPage() {
   const {
     queue,
     loading,
-    albumStatusByMbid,
+    statusFor,
     handleAddAlbum,
     handleMarkListened,
     handleRemove,
@@ -59,14 +59,14 @@ export default function TodoPage() {
         <SearchOverlay
           onClose={() => setSearchOpen(false)}
           onAdd={handleAddAlbum}
-          albumStatusByMbid={albumStatusByMbid}
+          statusFor={statusFor}
         />
       )}
 
       {detailAlbum && (
         <AlbumDetailModal
           album={detailAlbum}
-          status={albumStatusByMbid[detailAlbum.mbid]}
+          status={statusFor(detailAlbum)}
           onAdd={(status) =>
             handleAddAlbum(
               {

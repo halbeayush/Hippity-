@@ -20,7 +20,7 @@ export default function LibraryPage() {
   const {
     library,
     loading,
-    albumStatusByMbid,
+    statusFor,
     handleAddAlbum,
     handleRemove,
     handleRate,
@@ -100,14 +100,14 @@ export default function LibraryPage() {
         <SearchOverlay
           onClose={() => setSearchOpen(false)}
           onAdd={handleAddAlbum}
-          albumStatusByMbid={albumStatusByMbid}
+          statusFor={statusFor}
         />
       )}
 
       {detailAlbum && (
         <AlbumDetailModal
           album={detailAlbum}
-          status={albumStatusByMbid[detailAlbum.mbid]}
+          status={statusFor(detailAlbum)}
           onAdd={(status) =>
             handleAddAlbum(
               {

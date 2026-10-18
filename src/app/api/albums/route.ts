@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { areFriends } from "@/lib/friends";
 import { prisma } from "@/lib/prisma";
+import { albumVariantKey } from "@/lib/searchRelevance";
 
 // GET /api/albums?status=queue|library[&userId=] — list saved albums for
 // one list. Defaults to the current user; pass userId to view a friend's
@@ -54,29 +55,42 @@ export const POST = withSignIn(async (request: NextRequest) => {
   const targetStatus = status === "library" ? "library" : "queue";
   const userId = await getCurrentUserId();
 
-  const existing = await prisma.album.findUnique({
-    where: { userId_mbid: { userId, mbid } },
-  });
+  // Already saved, by this id or — since the same album carries a different
+  // id depending on where it was found ("itunes:…", a MusicBrainz id,
+  // "lastfm:…") — by artist + edition-stripped title. Either way it's the
+  // existing row that's updated, never a second copy.
+  const variant = albumVariantKey(artist, title);
+  const existing =
+    (await prisma.album.findUnique({ where: { userId_mbid: { userId, mbid } } })) ??
+    (
+      await prisma.album.findMany({
+        where: { userId },
+        select: { id: true, artist: true, title: true, status: true },
+      })
+    ).find((a) => albumVariantKey(a.artist, a.title) === variant) ??
+    null;
 
-  const album = await prisma.album.upsert({
-    where: { userId_mbid: { userId, mbid } },
-    // If the album is already saved, adding it to the library promotes it
-    // (same as "mark as listened"). Adding an already-libraried album to
-    // the wishlist is a no-op — it doesn't make sense to un-listen it.
-    update:
-      targetStatus === "library"
-        ? { status: "library", listenedAt: new Date() }
-        : {},
-    create: {
-      userId,
-      mbid,
-      title,
-      artist,
-      coverArtUrl: coverArtUrl ?? null,
-      status: targetStatus,
-      listenedAt: targetStatus === "library" ? new Date() : null,
-    },
-  });
+  // If the album is already saved, adding it to the library promotes it
+  // (same as "mark as listened"). Adding an already-libraried album again,
+  // or to the wishlist, is a no-op — it doesn't make sense to un-listen it.
+  const album = existing
+    ? existing.status === "queue" && targetStatus === "library"
+      ? await prisma.album.update({
+          where: { id: existing.id },
+          data: { status: "library", listenedAt: new Date() },
+        })
+      : await prisma.album.findUniqueOrThrow({ where: { id: existing.id } })
+    : await prisma.album.create({
+        data: {
+          userId,
+          mbid,
+          title,
+          artist,
+          coverArtUrl: coverArtUrl ?? null,
+          status: targetStatus,
+          listenedAt: targetStatus === "library" ? new Date() : null,
+        },
+      });
 
   // Activity-worthy: a brand new save, or a queue→library promotion.
   // Re-adding something already in its target list is a no-op above and
