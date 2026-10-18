@@ -21,7 +21,7 @@ export default function FriendRequests({
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{user.displayName}</p>
             <p className="truncate text-xs text-zinc-400">
-              @{user.username} wants to be friends
+              @{user.username}
             </p>
           </div>
           <div className="flex shrink-0 gap-1.5">
