@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type SVGProps } from "react";
+import { SOCIAL_CHANGED_EVENT } from "@/lib/useSocial";
 import Avatar from "./Avatar";
 
 function HomeIcon(props: SVGProps<SVGSVGElement>) {
@@ -156,25 +157,75 @@ function AccountMenu() {
   );
 }
 
+const BADGE_POLL_MS = 60_000;
+
+// How many friend requests and recommended albums are waiting on the
+// signed-in user (see /api/social/notifications). Rechecked on every page
+// change, when the browser tab regains focus, right after anything changes
+// on the Social tab, and once a minute while the page is visible.
+function useSocialBadgeCount(pathname: string): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      fetch("/api/social/notifications")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!cancelled && data) {
+            setCount((data.friendRequests ?? 0) + (data.recommendations ?? 0));
+          }
+        })
+        .catch(() => {});
+    }
+    function loadIfVisible() {
+      if (document.visibilityState === "visible") load();
+    }
+
+    load();
+    const interval = setInterval(loadIfVisible, BADGE_POLL_MS);
+    window.addEventListener("focus", load);
+    window.addEventListener(SOCIAL_CHANGED_EVENT, load);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", load);
+      window.removeEventListener(SOCIAL_CHANGED_EVENT, load);
+    };
+  }, [pathname]);
+
+  return count;
+}
+
 export default function TopNav() {
   const pathname = usePathname();
+  const socialBadge = useSocialBadgeCount(pathname);
 
   return (
     <nav className="mb-6 flex gap-1 rounded-xl bg-zinc-100/90 p-1.5 text-sm font-medium backdrop-blur dark:bg-zinc-800/90">
       {NAV_ITEMS.map(({ href, label, Icon }) => {
         const active = pathname === href;
+        const badge = href === "/social" ? socialBadge : 0;
         return (
           <Link
             key={href}
             href={href}
             aria-current={active ? "page" : undefined}
+            aria-label={badge > 0 ? `${label}, ${badge} waiting` : undefined}
             className={`flex flex-1 flex-col items-center gap-1 rounded-lg px-2 py-2 transition-colors duration-150 sm:flex-row sm:justify-center sm:gap-1.5 ${
               active
                 ? "bg-white font-bold text-zinc-900 shadow-sm dark:bg-zinc-950 dark:text-zinc-50"
                 : "text-zinc-500 hover:bg-white/60 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-900/50 dark:hover:text-zinc-200"
             }`}
           >
-            <Icon className="h-4 w-4 shrink-0" />
+            <span className="relative shrink-0">
+              <Icon className="h-4 w-4" />
+              {badge > 0 && (
+                <span className="absolute -right-2.5 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-zinc-100 dark:ring-zinc-800">
+                  {badge > 9 ? "9+" : badge}
+                </span>
+              )}
+            </span>
             <span className="text-[11px] sm:text-sm">{label}</span>
           </Link>
         );

@@ -68,20 +68,16 @@ export default function FriendProfile({ username }: { username: string }) {
       </div>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold">Recommend an album</h2>
-        <RecommendPanel
-          friendUsername={profile.username}
-          friendDisplayName={profile.displayName}
-        />
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold">This week&apos;s top 5</h2>
-        <WeeklyTopTracksChart userId={profile.id} />
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold">Library</h2>
+        {/* Most recently listened first (see /api/albums). */}
+        <h2 className="mb-3 text-sm font-semibold">
+          Listened to
+          {!loading && (
+            <span className="font-normal text-zinc-400">
+              {" "}
+              · {library.length} album{library.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </h2>
         {loading ? (
           <p className="py-6 text-center text-xs text-zinc-400">Loading...</p>
         ) : library.length === 0 ? (
@@ -120,6 +116,19 @@ export default function FriendProfile({ username }: { username: string }) {
             ))}
           </div>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold">This week&apos;s top 5</h2>
+        <WeeklyTopTracksChart userId={profile.id} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold">Recommend an album</h2>
+        <RecommendPanel
+          friendUsername={profile.username}
+          friendDisplayName={profile.displayName}
+        />
       </section>
 
       {detailAlbum && (

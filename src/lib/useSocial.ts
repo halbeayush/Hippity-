@@ -8,6 +8,10 @@ import type {
   RecommendationEntry,
 } from "@/lib/types";
 
+// Fired after anything on the Social tab changes, so the tab's badge (see
+// TopNav) recounts straight away instead of on its next poll.
+export const SOCIAL_CHANGED_EVENT = "spinsheet:social-changed";
+
 export function useSocial() {
   const [friends, setFriends] = useState<FriendUser[]>([]);
   const [incoming, setIncoming] = useState<PendingRequest[]>([]);
@@ -33,6 +37,7 @@ export function useSocial() {
     setActivities(activityData.activities ?? []);
     setIncomingRecommendations(recsData.recommendations ?? []);
     setLoading(false);
+    window.dispatchEvent(new Event(SOCIAL_CHANGED_EVENT));
   }, []);
 
   useEffect(() => {

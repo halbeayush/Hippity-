@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { FeedItem } from "@/lib/types";
 import { formatRelativeTime } from "@/lib/relativeTime";
 import Avatar from "@/components/Avatar";
@@ -49,11 +50,17 @@ export default function ActivityFeed({
         const actor = item.kind === "recommendation" ? item.sender : item.user;
         return (
           <li key={`${item.kind}-${item.id}`} className="flex items-center gap-3 py-2.5">
-            <Avatar
-              displayName={actor.displayName}
-              color={actor.avatarColor}
-              size="sm"
-            />
+            <Link
+              href={`/social/${actor.username}`}
+              aria-label={`${actor.displayName}'s library`}
+              className="shrink-0 hover:opacity-80"
+            >
+              <Avatar
+                displayName={actor.displayName}
+                color={actor.avatarColor}
+                size="sm"
+              />
+            </Link>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs text-zinc-700 dark:text-zinc-200">
                 {describe(item)}

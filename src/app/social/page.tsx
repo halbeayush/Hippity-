@@ -2,6 +2,7 @@
 
 import ActivityFeed from "@/components/social/ActivityFeed";
 import AddFriendPanel from "@/components/social/AddFriendPanel";
+import FriendRequests from "@/components/social/FriendRequests";
 import FriendsList from "@/components/social/FriendsList";
 import IncomingRecommendations from "@/components/social/IncomingRecommendations";
 import TopNav from "@/components/TopNav";
@@ -29,14 +30,31 @@ export default function SocialPage() {
         <p className="py-16 text-center text-sm text-zinc-400">Loading...</p>
       ) : (
         <div className="flex flex-col gap-8">
-          <section>
-            <h2 className="mb-3 text-sm font-semibold">Activity</h2>
-            <ActivityFeed activities={activities} />
-          </section>
+          {/* What's waiting on you comes first — it's what the Social tab's
+              badge is counting. */}
+          {incoming.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-sm font-semibold">
+                Friend requests
+                <span className="font-normal text-zinc-400"> · {incoming.length}</span>
+              </h2>
+              <FriendRequests
+                incoming={incoming}
+                onAccept={acceptRequest}
+                onDecline={declineRequest}
+              />
+            </section>
+          )}
 
           <section>
             <h2 className="mb-3 text-sm font-semibold">
               Recommended to you
+              {incomingRecommendations.length > 0 && (
+                <span className="font-normal text-zinc-400">
+                  {" "}
+                  · {incomingRecommendations.length}
+                </span>
+              )}
             </h2>
             <IncomingRecommendations
               recommendations={incomingRecommendations}
@@ -45,13 +63,16 @@ export default function SocialPage() {
           </section>
 
           <section>
+            <h2 className="mb-3 text-sm font-semibold">Activity</h2>
+            <ActivityFeed activities={activities} />
+          </section>
+
+          <section>
             <h2 className="mb-3 text-sm font-semibold">Add a friend</h2>
             <AddFriendPanel
-              incoming={incoming}
               outgoing={outgoing}
               onSendRequest={sendRequest}
-              onAccept={acceptRequest}
-              onDecline={declineRequest}
+              onCancel={declineRequest}
             />
           </section>
 

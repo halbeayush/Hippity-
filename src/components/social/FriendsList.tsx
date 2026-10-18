@@ -20,10 +20,13 @@ export default function FriendsList({ friends }: { friends: FriendUser[] }) {
             className="flex items-center gap-3 py-2.5 hover:opacity-80"
           >
             <Avatar displayName={friend.displayName} color={friend.avatarColor} />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{friend.displayName}</p>
               <p className="truncate text-xs text-zinc-400">@{friend.username}</p>
             </div>
+            <span className="shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+              View library ›
+            </span>
           </Link>
         </li>
       ))}
