@@ -5,6 +5,7 @@ import AddFriendPanel from "@/components/social/AddFriendPanel";
 import FriendRequests from "@/components/social/FriendRequests";
 import FriendsList from "@/components/social/FriendsList";
 import IncomingRecommendations from "@/components/social/IncomingRecommendations";
+import WeeklyTopTracksChart from "@/components/social/WeeklyTopTracksChart";
 import TopNav from "@/components/TopNav";
 import { useSocial } from "@/lib/useSocial";
 
@@ -65,6 +66,11 @@ export default function SocialPage() {
           <section>
             <h2 className="mb-3 text-sm font-semibold">Activity</h2>
             <ActivityFeed activities={activities} />
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-sm font-semibold">Your weekly top 5</h2>
+            <WeeklyTopTracksChart />
           </section>
 
           <section>

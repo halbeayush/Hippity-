@@ -121,7 +121,10 @@ export default function FriendProfile({ username }: { username: string }) {
 
       <section>
         <h2 className="mb-3 text-sm font-semibold">This week&apos;s top 5</h2>
-        <WeeklyTopTracksChart userId={profile.id} />
+        <WeeklyTopTracksChart
+          userId={profile.id}
+          displayName={profile.displayName}
+        />
       </section>
 
       <section>

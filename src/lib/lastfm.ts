@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { createTtlCache } from "./apiCache";
 import { mapWithConcurrency } from "./concurrency";
 import { baseAlbumTitle } from "./searchRelevance";
@@ -180,4 +181,131 @@ export function attachPlaycounts<T extends { artist: string; title: string }>(
     ...r,
     playcount: await getAlbumPlaycount(r.artist, r.title),
   }));
+}
+
+// --- Signing in with Last.fm -------------------------------------------
+// Last.fm's web auth: the browser goes to LASTFM_AUTH_URL, the person
+// approves, and Last.fm sends them back to our callback with a one-time
+// token. Trading that token for a session (getLastfmSessionName) proves
+// which Last.fm account it is, so nobody can claim someone else's
+// scrobbles by typing their username. Needs LASTFM_SHARED_SECRET besides
+// the API key. Only the username is kept: everything this app reads
+// afterwards (user.getTopTracks) is public.
+const LASTFM_AUTH_URL = "https://www.last.fm/api/auth/";
+
+// Holds a random value between the redirect to Last.fm and the callback,
+// which checks it — so a link someone else crafted can't attach their
+// Last.fm account to yours. Same idea as the Google sign-in's state.
+export const LASTFM_STATE_COOKIE = "spinsheet_lastfm_auth";
+
+export function lastfmAuthConfig() {
+  const apiKey = process.env.LASTFM_API_KEY;
+  const secret = process.env.LASTFM_SHARED_SECRET;
+  return apiKey && secret ? { apiKey, secret } : null;
+}
+
+export function lastfmAuthUrl(apiKey: string, callbackUrl: string): URL {
+  const url = new URL(LASTFM_AUTH_URL);
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("cb", callbackUrl);
+  return url;
+}
+
+// Last.fm's request signature: every parameter (except format) sorted by
+// name, concatenated as name+value, then the shared secret, MD5-hashed.
+function lastfmSignature(params: Record<string, string>, secret: string): string {
+  const joined = Object.keys(params)
+    .sort()
+    .map((key) => `${key}${params[key]}`)
+    .join("");
+  return createHash("md5").update(joined + secret, "utf8").digest("hex");
+}
+
+// The Last.fm username behind a callback token. Throws on any failure.
+export async function getLastfmSessionName(
+  token: string,
+  config: { apiKey: string; secret: string },
+): Promise<string> {
+  const params = { api_key: config.apiKey, method: "auth.getSession", token };
+  const url = new URL(LASTFM_BASE);
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  url.searchParams.set("api_sig", lastfmSignature(params, config.secret));
+  url.searchParams.set("format", "json");
+
+  const response = await fetch(url, { signal: AbortSignal.timeout(LASTFM_TIMEOUT_MS) });
+  const data: { session?: { name?: string } } & LastfmErrorResponse =
+    await response.json();
+  if (!response.ok || data.error || !data.session?.name) {
+    throw new Error(`Last.fm sign-in failed: ${data.message ?? response.status}`);
+  }
+  return data.session.name;
+}
+
+// --- Weekly top 5 --------------------------------------------------------
+export type LastfmTopTrack = {
+  rank: number;
+  trackName: string;
+  artist: string;
+  playcount: number;
+  coverArtUrl: string | null;
+};
+
+type LastfmTopTracksResponse = {
+  toptracks?: {
+    track?: {
+      name: string;
+      playcount?: string;
+      artist?: { name?: string };
+      "@attr"?: { rank?: string };
+    }[];
+  };
+};
+
+type LastfmTrackInfoResponse = {
+  track?: { album?: { image?: LastfmImage[] } };
+};
+
+const TOP_TRACKS_LIMIT = 5;
+
+// Track listings carry only Last.fm's placeholder image, so each cover
+// comes from the track's album (track.getInfo). A missing cover is fine.
+async function trackCoverUrl(artist: string, track: string): Promise<string | null> {
+  try {
+    const data = await lastfmFetch<LastfmTrackInfoResponse>("track.getInfo", {
+      artist,
+      track,
+      autocorrect: "1",
+    });
+    const image = lastfmCoverUrl(data.track?.album?.image);
+    return image ? `/api/cover-art?src=${encodeURIComponent(image)}` : null;
+  } catch {
+    return null;
+  }
+}
+
+// A Last.fm user's five most-played tracks over the last 7 days. Throws if
+// Last.fm can't be reached (the caller falls back to its saved copy).
+export async function getLastfmWeeklyTopTracks(
+  username: string,
+): Promise<LastfmTopTrack[]> {
+  const data = await lastfmFetch<LastfmTopTracksResponse>("user.getTopTracks", {
+    user: username,
+    period: "7day",
+    limit: String(TOP_TRACKS_LIMIT),
+  });
+  const tracks = (data.toptracks?.track ?? []).slice(0, TOP_TRACKS_LIMIT);
+  return Promise.all(
+    tracks.map(async (t, i) => {
+      const artist = t.artist?.name ?? "Unknown artist";
+      return {
+        rank: Number(t["@attr"]?.rank) || i + 1,
+        trackName: t.name,
+        artist,
+        playcount: Number(t.playcount) || 0,
+        coverArtUrl: await trackCoverUrl(artist, t.name),
+      };
+    }),
+  );
 }

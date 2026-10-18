@@ -17,16 +17,19 @@ datasource db {
 // pre-login placeholder row (username "me") is claimed by the first account
 // created, keeping its library and social data. See src/lib/auth.ts.
 model User {
-  id           Int      @id @default(autoincrement())
-  username     String   @unique
-  displayName  String
-  avatarColor  String   @default("#71717a")
-  createdAt    DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  username       String   @unique
+  displayName    String
+  avatarColor    String   @default("#71717a")
+  createdAt      DateTime @default(now())
   // scrypt hash (see src/lib/password.ts); null for Google-only accounts.
-  passwordHash String?
+  passwordHash   String?
   // Google's stable account id ("sub"); null unless signed in with Google.
-  googleId     String?  @unique
-  email        String?
+  googleId       String?  @unique
+  email          String?
+  // Set by "Sign in with Last.fm" (src/app/api/lastfm/), so the weekly
+  // top 5 comes from their real scrobbles. Null until they connect.
+  lastfmUsername String?
 
   sessions            Session[]
   albums              Album[]

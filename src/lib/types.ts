@@ -124,9 +124,21 @@ export type RecommendationEntry = {
 };
 
 export type WeeklyTopTrack = {
-  id: number;
   rank: number;
   trackName: string;
   artist: string;
   coverArtUrl: string | null;
+  // Only from Last.fm; the seeded sample charts don't have one.
+  playcount?: number;
+};
+
+// GET /api/social/top-tracks. "lastfm" is a real chart from the person's
+// connected Last.fm account; "sample" is the seeded demo data for the fake
+// friends; null means neither (not connected, nothing seeded).
+export type TopTracksResponse = {
+  source: "lastfm" | "sample" | null;
+  isSelf: boolean;
+  lastfmUsername: string | null;
+  weekStart: string | null;
+  tracks: WeeklyTopTrack[];
 };
