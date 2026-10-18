@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { RecommendationEntry, SearchResult } from "@/lib/types";
 import { useAlbumSearch } from "@/lib/useAlbumSearch";
 import CoverImage from "@/components/CoverImage";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 export default function RecommendPanel({
   friendUsername,
@@ -23,10 +24,10 @@ export default function RecommendPanel({
   const [message, setMessage] = useState<string | null>(null);
 
   const loadSlots = useCallback(async () => {
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/social/recommendations?to=${encodeURIComponent(friendUsername)}`,
     );
-    const data = await res.json();
+    const data = await readJson(res);
     setMax(data.max ?? 3);
     setRemaining(data.remaining ?? 0);
     setPending(data.pending ?? []);
@@ -41,7 +42,7 @@ export default function RecommendPanel({
   async function handleSend(result: SearchResult) {
     setSendingMbid(result.mbid);
     setMessage(null);
-    const res = await fetch("/api/social/recommendations", {
+    const res = await apiFetch("/api/social/recommendations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -52,7 +53,7 @@ export default function RecommendPanel({
         coverArtUrl: result.coverArtUrl,
       }),
     });
-    const data = await res.json();
+    const data = await readJson(res);
     setSendingMbid(null);
     if (!res.ok) {
       setMessage(data.error ?? "Something went wrong.");

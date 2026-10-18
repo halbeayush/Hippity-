@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type SVGProps } from "react";
+import { apiFetch } from "@/lib/apiFetch";
 import { SOCIAL_CHANGED_EVENT } from "@/lib/useSocial";
 import Avatar from "./Avatar";
 
@@ -169,7 +170,7 @@ function useSocialBadgeCount(pathname: string): number {
   useEffect(() => {
     let cancelled = false;
     function load() {
-      fetch("/api/social/notifications")
+      apiFetch("/api/social/notifications")
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
           if (!cancelled && data) {

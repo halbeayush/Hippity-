@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { areFriends } from "@/lib/friends";
 import { prisma } from "@/lib/prisma";
 
 // GET /api/albums?status=queue|library[&userId=] — list saved albums for
 // one list. Defaults to the current user; pass userId to view a friend's
 // list (only allowed once you're accepted friends).
-export async function GET(request: NextRequest) {
+export const GET = withSignIn(async (request: NextRequest) => {
   const status = request.nextUrl.searchParams.get("status");
   const userIdParam = request.nextUrl.searchParams.get("userId");
 
@@ -36,11 +36,11 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({ albums });
-}
+});
 
 // POST /api/albums — save an album (from search) to the wishlist or
 // straight to the library, for the current user.
-export async function POST(request: NextRequest) {
+export const POST = withSignIn(async (request: NextRequest) => {
   const body = await request.json();
   const { mbid, title, artist, coverArtUrl, status } = body ?? {};
 
@@ -93,4 +93,4 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ album }, { status: 201 });
-}
+});

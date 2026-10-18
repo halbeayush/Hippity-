@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatRelativeTime } from "@/lib/relativeTime";
 import type { NewsItem } from "@/lib/types";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 export default function MusicNews() {
   const [items, setItems] = useState<NewsItem[]>([]);
@@ -11,9 +12,9 @@ export default function MusicNews() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/home/music-news", { signal: controller.signal })
+    apiFetch("/api/home/music-news", { signal: controller.signal })
       .then(async (res) => {
-        const data = await res.json();
+        const data = await readJson(res);
         if (!res.ok || data.error) throw new Error(data.error);
         setItems(data.items ?? []);
       })

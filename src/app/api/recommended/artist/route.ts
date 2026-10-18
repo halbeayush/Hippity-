@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import {
   findITunesArtistId,
   getArtistCatalog,
@@ -34,7 +34,7 @@ const FETCH_LIMIT_REFRESH = 36;
 // in three tiers: their own albums first, then their own singles/EPs, then
 // other artists' singles/EPs where this artist appears as a featured guest.
 // Lower tiers only fill in once the higher tier runs out.
-export async function GET(request: NextRequest) {
+export const GET = withSignIn(async (request: NextRequest) => {
   const artist = request.nextUrl.searchParams.get("artist")?.trim();
   const excludeMbids = new Set(
     (request.nextUrl.searchParams.get("exclude") ?? "")
@@ -47,9 +47,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "artist is required" }, { status: 400 });
   }
 
-  try {
-    const userId = await getCurrentUserId();
+  // Outside the try, so a signed-out request gets withSignIn's 401 rather
+  // than this route's 502.
+  const userId = await getCurrentUserId();
 
+  try {
     const albums = await getCachedRecommendations(
       `artist:${userId}:${artist.toLowerCase()}`,
       async () => {
@@ -85,7 +87,7 @@ export async function GET(request: NextRequest) {
       { status: 502 },
     );
   }
-}
+});
 
 // The three tiers, from the artist's official streaming catalog — their
 // Apple Music artist page (see getArtistCatalog). This used to come from

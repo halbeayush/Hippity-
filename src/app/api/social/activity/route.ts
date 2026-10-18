@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { getFriendFeed } from "@/lib/feed";
 
 // GET /api/social/activity — friends' recent library/to-do/rating actions
@@ -8,8 +8,8 @@ import { getFriendFeed } from "@/lib/feed";
 // Kept short so the Social tab stays scannable — just the latest few.
 const FEED_LIMIT = 8;
 
-export async function GET() {
+export const GET = withSignIn(async () => {
   const userId = await getCurrentUserId();
   const activities = await getFriendFeed(userId, FEED_LIMIT);
   return NextResponse.json({ activities });
-}
+});

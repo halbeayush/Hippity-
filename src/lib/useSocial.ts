@@ -7,6 +7,7 @@ import type {
   PendingRequest,
   RecommendationEntry,
 } from "@/lib/types";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 // Fired after anything on the Social tab changes, so the tab's badge (see
 // TopNav) recounts straight away instead of on its next poll.
@@ -24,13 +25,13 @@ export function useSocial() {
 
   const loadFriends = useCallback(async () => {
     const [friendsRes, activityRes, recsRes] = await Promise.all([
-      fetch("/api/social/friends"),
-      fetch("/api/social/activity"),
-      fetch("/api/social/recommendations?box=incoming"),
+      apiFetch("/api/social/friends"),
+      apiFetch("/api/social/activity"),
+      apiFetch("/api/social/recommendations?box=incoming"),
     ]);
-    const friendsData = await friendsRes.json();
-    const activityData = await activityRes.json();
-    const recsData = await recsRes.json();
+    const friendsData = await readJson(friendsRes);
+    const activityData = await readJson(activityRes);
+    const recsData = await readJson(recsRes);
     setFriends(friendsData.friends ?? []);
     setIncoming(friendsData.incoming ?? []);
     setOutgoing(friendsData.outgoing ?? []);
@@ -46,24 +47,24 @@ export function useSocial() {
   }, [loadFriends]);
 
   async function sendRequest(username: string) {
-    const res = await fetch("/api/social/friends", {
+    const res = await apiFetch("/api/social/friends", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username }),
     });
-    const data = await res.json();
+    const data = await readJson(res);
     if (!res.ok) return { ok: false as const, error: data.error as string };
     await loadFriends();
     return { ok: true as const };
   }
 
   async function acceptRequest(friendshipId: number) {
-    await fetch(`/api/social/friends/${friendshipId}`, { method: "PATCH" });
+    await apiFetch(`/api/social/friends/${friendshipId}`, { method: "PATCH" });
     await loadFriends();
   }
 
   async function declineRequest(friendshipId: number) {
-    await fetch(`/api/social/friends/${friendshipId}`, { method: "DELETE" });
+    await apiFetch(`/api/social/friends/${friendshipId}`, { method: "DELETE" });
     await loadFriends();
   }
 
@@ -74,7 +75,7 @@ export function useSocial() {
     setIncomingRecommendations((current) =>
       current.filter((r) => r.id !== recommendationId),
     );
-    await fetch(`/api/social/recommendations/${recommendationId}`, {
+    await apiFetch(`/api/social/recommendations/${recommendationId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action }),

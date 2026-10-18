@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { prisma } from "@/lib/prisma";
 
 // GET /api/social/users/search?q= — find users by username to send a
 // friend request to.
-export async function GET(request: NextRequest) {
+export const GET = withSignIn(async (request: NextRequest) => {
   const q = request.nextUrl.searchParams.get("q")?.trim();
   if (!q) return NextResponse.json({ users: [] });
 
@@ -31,4 +31,4 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({ users });
-}
+});

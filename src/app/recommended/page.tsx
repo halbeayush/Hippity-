@@ -6,6 +6,7 @@ import RecommendedAlbumCard from "@/components/RecommendedAlbumCard";
 import TopNav from "@/components/TopNav";
 import type { AlbumSummary } from "@/lib/types";
 import { useAlbums } from "@/lib/useAlbums";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 type Mode = "library" | "artist" | "genre";
 type SaveStatus = "queue" | "library";
@@ -103,11 +104,11 @@ export default function RecommendedPage() {
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/recommended/artist-search?q=${encodeURIComponent(trimmed)}`,
           { signal: controller.signal },
         );
-        const data = await res.json();
+        const data = await readJson(res);
         setArtistSuggestions(data.artists ?? []);
       } catch (err) {
         if ((err as Error).name !== "AbortError") setArtistSuggestions([]);
@@ -137,9 +138,9 @@ export default function RecommendedPage() {
     setError(false);
     setMessage(null);
 
-    fetch(url, { signal: controller.signal })
+    apiFetch(url, { signal: controller.signal })
       .then(async (res) => {
-        const data = await res.json();
+        const data = await readJson(res);
         if (!res.ok || data.error) throw new Error(data.error);
         const newAlbums: AlbumSummary[] = data.albums ?? [];
         setCandidates(newAlbums);
@@ -174,8 +175,8 @@ export default function RecommendedPage() {
       : url;
 
     try {
-      const res = await fetch(withExclude, { signal: controller.signal });
-      const data = await res.json();
+      const res = await apiFetch(withExclude, { signal: controller.signal });
+      const data = await readJson(res);
       if (!res.ok || data.error) throw new Error(data.error);
       const newAlbums: AlbumSummary[] = data.albums ?? [];
       setCandidates(newAlbums);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { WeeklyTopTrack } from "@/lib/types";
 import CoverImage from "@/components/CoverImage";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 // Renders a user's top-5 tracks for their most recent week. Fetches by
 // userId so the same component works for the current user or a friend
@@ -16,10 +17,10 @@ export default function WeeklyTopTracksChart({ userId }: { userId: number }) {
     const controller = new AbortController();
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    fetch(`/api/social/top-tracks?userId=${userId}`, {
+    apiFetch(`/api/social/top-tracks?userId=${userId}`, {
       signal: controller.signal,
     })
-      .then((res) => res.json())
+      .then(readJson)
       .then((data) => {
         setTracks(data.tracks ?? []);
         setWeekStart(data.weekStart ?? null);

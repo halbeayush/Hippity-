@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { FriendUser, PendingRequest } from "@/lib/types";
 import Avatar from "@/components/Avatar";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 // Incoming requests are shown separately, at the top of the Social tab —
 // see FriendRequests.
@@ -32,11 +33,11 @@ export default function AddFriendPanel({
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/social/users/search?q=${encodeURIComponent(trimmed)}`,
           { signal: controller.signal },
         );
-        const data = await res.json();
+        const data = await readJson(res);
         setResults(data.users ?? []);
       } catch (err) {
         if ((err as Error).name !== "AbortError") setResults([]);

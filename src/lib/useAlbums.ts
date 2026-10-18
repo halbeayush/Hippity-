@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { announceCoverAdded } from "@/lib/coverEvents";
 import type { Album, SearchResult } from "@/lib/types";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 type Status = "queue" | "library";
 
@@ -15,11 +16,11 @@ export function useAlbums() {
 
   const loadLists = useCallback(async () => {
     const [libRes, queueRes] = await Promise.all([
-      fetch("/api/albums?status=library"),
-      fetch("/api/albums?status=queue"),
+      apiFetch("/api/albums?status=library"),
+      apiFetch("/api/albums?status=queue"),
     ]);
-    const libData = await libRes.json();
-    const queueData = await queueRes.json();
+    const libData = await readJson(libRes);
+    const queueData = await readJson(queueRes);
     setLibrary(libData.albums ?? []);
     setQueue(queueData.albums ?? []);
     setLoading(false);
@@ -31,7 +32,7 @@ export function useAlbums() {
   }, [loadLists]);
 
   async function handleAddAlbum(result: SearchResult, status: Status) {
-    await fetch("/api/albums", {
+    await apiFetch("/api/albums", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...result, status }),
@@ -44,7 +45,7 @@ export function useAlbums() {
   async function handleMarkListened(id: number) {
     const album = queue.find((a) => a.id === id);
     setQueue((q) => q.filter((a) => a.id !== id));
-    await fetch(`/api/albums/${id}/listened`, { method: "POST" });
+    await apiFetch(`/api/albums/${id}/listened`, { method: "POST" });
     // Marking as listened promotes the album into the Library.
     if (album) announceCoverAdded(album.coverArtUrl);
     await loadLists();
@@ -53,12 +54,12 @@ export function useAlbums() {
   async function handleRemove(id: number, from: Status) {
     if (from === "queue") setQueue((q) => q.filter((a) => a.id !== id));
     else setLibrary((l) => l.filter((a) => a.id !== id));
-    await fetch(`/api/albums/${id}`, { method: "DELETE" });
+    await apiFetch(`/api/albums/${id}`, { method: "DELETE" });
   }
 
   async function handleRate(id: number, rating: number) {
     setLibrary((l) => l.map((a) => (a.id === id ? { ...a, rating } : a)));
-    await fetch(`/api/albums/${id}`, {
+    await apiFetch(`/api/albums/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rating }),
@@ -67,7 +68,7 @@ export function useAlbums() {
 
   async function handleNote(id: number, note: string) {
     setLibrary((l) => l.map((a) => (a.id === id ? { ...a, note } : a)));
-    await fetch(`/api/albums/${id}`, {
+    await apiFetch(`/api/albums/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ note }),

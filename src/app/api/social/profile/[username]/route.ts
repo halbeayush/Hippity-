@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { areFriends } from "@/lib/friends";
 import { prisma } from "@/lib/prisma";
 
@@ -7,7 +7,7 @@ type RouteParams = { params: Promise<{ username: string }> };
 
 // GET /api/social/profile/:username — a friend's basic profile info. Gates
 // the friend profile page: only accepted friends (or yourself) can view it.
-export async function GET(_request: NextRequest, { params }: RouteParams) {
+export const GET = withSignIn(async (_request: NextRequest, { params }: RouteParams) => {
   const { username } = await params;
   const currentUserId = await getCurrentUserId();
 
@@ -26,4 +26,4 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   }
 
   return NextResponse.json({ user, isSelf });
-}
+});

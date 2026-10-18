@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { areFriends } from "@/lib/friends";
 import { prisma } from "@/lib/prisma";
 
@@ -41,7 +41,7 @@ function toEntry(row: {
 //   ?box=incoming     — pending recommendations sent to the current user
 //   ?to=<username>    — remaining slots + pending recommendations the
 //                        current user has sent to that friend
-export async function GET(request: NextRequest) {
+export const GET = withSignIn(async (request: NextRequest) => {
   const userId = await getCurrentUserId();
   const box = request.nextUrl.searchParams.get("box");
   const to = request.nextUrl.searchParams.get("to");
@@ -81,10 +81,10 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({ error: "Unsupported query" }, { status: 400 });
-}
+});
 
 // POST /api/social/recommendations — recommend an album to a friend.
-export async function POST(request: NextRequest) {
+export const POST = withSignIn(async (request: NextRequest) => {
   const body = await request.json();
   const { recipientUsername, mbid, title, artist, coverArtUrl } = body ?? {};
 
@@ -154,4 +154,4 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json({ recommendation }, { status: 201 });
-}
+});

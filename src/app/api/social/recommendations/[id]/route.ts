@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { prisma } from "@/lib/prisma";
 
 type RouteParams = { params: Promise<{ id: string }> };
@@ -9,7 +9,7 @@ type RouteParams = { params: Promise<{ id: string }> };
 // (same as marking a to-do item listened elsewhere in the app); "reject"
 // just closes it out. Either way frees up one of the sender's 3 slots to
 // this recipient, since that count is just live pending rows.
-export async function PATCH(request: NextRequest, { params }: RouteParams) {
+export const PATCH = withSignIn(async (request: NextRequest, { params }: RouteParams) => {
   const { id } = await params;
   const body = await request.json();
   const action = body?.action;
@@ -63,4 +63,4 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
 
   return NextResponse.json({ recommendation: updated });
-}
+});

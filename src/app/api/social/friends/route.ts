@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { prisma } from "@/lib/prisma";
 
 const USER_SELECT = {
@@ -11,7 +11,7 @@ const USER_SELECT = {
 
 // GET /api/social/friends — accepted friends, plus incoming and outgoing
 // pending requests, for the current user.
-export async function GET() {
+export const GET = withSignIn(async () => {
   const userId = await getCurrentUserId();
 
   const friendships = await prisma.friendship.findMany({
@@ -40,12 +40,12 @@ export async function GET() {
   }
 
   return NextResponse.json({ friends, incoming, outgoing });
-}
+});
 
 // POST /api/social/friends — send a friend request by username. If the
 // target already sent us a pending request, this accepts it instead of
 // creating a duplicate.
-export async function POST(request: NextRequest) {
+export const POST = withSignIn(async (request: NextRequest) => {
   const body = await request.json();
   const username = (body?.username ?? "").trim();
   if (!username) {
@@ -89,4 +89,4 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json({ friendship }, { status: 201 });
-}
+});

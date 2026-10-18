@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { AlbumSummary, Track } from "@/lib/types";
 import CoverImage from "./CoverImage";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 type SaveStatus = "queue" | "library";
 
@@ -36,12 +37,12 @@ export default function AlbumDetailModal({
     setLoading(true);
     setError(false);
 
-    fetch(
+    apiFetch(
       `/api/tracklist?mbid=${encodeURIComponent(album.mbid)}&artist=${encodeURIComponent(album.artist)}&title=${encodeURIComponent(album.title)}`,
       { signal: controller.signal },
     )
       .then(async (res) => {
-        const data = await res.json();
+        const data = await readJson(res);
         if (!res.ok || data.error) throw new Error(data.error);
         setTracks(data.tracks ?? []);
       })

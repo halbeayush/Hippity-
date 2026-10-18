@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { lastfmFetch } from "@/lib/lastfm";
 import { prisma } from "@/lib/prisma";
 import {
@@ -25,9 +25,12 @@ type LastfmSimilarArtist = { name: string; match: string };
 // artists on Last.fm for each, and surfaces their top albums. `exclude`
 // (passed on refresh) is a soft preference against repeating the last
 // batch, not a permanent block — see preferFresh in recommendations.ts.
-export async function GET(request: NextRequest) {
+export const GET = withSignIn(async (request: NextRequest) => {
+  // Outside the try, so a signed-out request gets withSignIn's 401 rather
+  // than this route's 502.
+  const userId = await getCurrentUserId();
+
   try {
-    const userId = await getCurrentUserId();
     const excludeMbids = new Set(
       (request.nextUrl.searchParams.get("exclude") ?? "")
         .split(",")
@@ -123,4 +126,4 @@ export async function GET(request: NextRequest) {
       { status: 502 },
     );
   }
-}
+});

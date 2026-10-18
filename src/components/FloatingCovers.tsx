@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { onCoverAdded } from "@/lib/coverEvents";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 type FloatingCover = {
   id: string;
@@ -92,8 +93,11 @@ export default function FloatingCovers() {
     let cancelled = false;
 
     async function load() {
-      const res = await fetch("/api/albums?status=library");
-      const data = await res.json();
+      // Nobody's signed in on /login, so there's no Library to show — and
+      // signing in is a full page load, which mounts this afresh.
+      if (window.location.pathname === "/login") return;
+      const res = await apiFetch("/api/albums?status=library");
+      const data = await readJson(res);
       const urls = (data.albums ?? [])
         .map((a: { coverArtUrl: string | null }) => a.coverArtUrl)
         .filter((url: string | null): url is string => Boolean(url));

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { prisma } from "@/lib/prisma";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
 // PATCH /api/albums/:id — update the current user's own saved album's
 // rating and/or note.
-export async function PATCH(request: NextRequest, { params }: RouteParams) {
+export const PATCH = withSignIn(async (request: NextRequest, { params }: RouteParams) => {
   const { id } = await params;
   const body = await request.json();
   const { rating, note } = body ?? {};
@@ -41,11 +41,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   }
 
   return NextResponse.json({ album });
-}
+});
 
 // DELETE /api/albums/:id — remove one of the current user's own saved
 // albums entirely.
-export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+export const DELETE = withSignIn(async (_request: NextRequest, { params }: RouteParams) => {
   const { id } = await params;
   const userId = await getCurrentUserId();
   const existing = await prisma.album.findUnique({ where: { id: Number(id) } });
@@ -55,4 +55,4 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
   await prisma.album.delete({ where: { id: Number(id) } });
   return NextResponse.json({ ok: true });
-}
+});

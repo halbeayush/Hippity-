@@ -10,6 +10,7 @@ import WeeklyTopTracksChart from "@/components/social/WeeklyTopTracksChart";
 import type { Album, FriendUser } from "@/lib/types";
 import { useAlbums } from "@/lib/useAlbums";
 import { useFriendAlbums } from "@/lib/useFriendAlbums";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 export default function FriendProfile({ username }: { username: string }) {
   const [profile, setProfile] = useState<FriendUser | null>(null);
@@ -19,9 +20,9 @@ export default function FriendProfile({ username }: { username: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/social/profile/${encodeURIComponent(username)}`)
+    apiFetch(`/api/social/profile/${encodeURIComponent(username)}`)
       .then(async (res) => {
-        const data = await res.json();
+        const data = await readJson(res);
         if (cancelled) return;
         if (res.status === 404) return setNotFound(true);
         if (res.status === 403) return setForbidden(true);

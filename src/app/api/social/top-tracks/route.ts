@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { areFriends } from "@/lib/friends";
 import { prisma } from "@/lib/prisma";
 
@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 // tracks. Defaults to the current user; pass userId to view a friend's
 // chart. Falls back to their latest seeded week if the current week hasn't
 // been populated.
-export async function GET(request: NextRequest) {
+export const GET = withSignIn(async (request: NextRequest) => {
   const userIdParam = request.nextUrl.searchParams.get("userId");
   const currentUserId = await getCurrentUserId();
   const targetUserId = userIdParam ? Number(userIdParam) : currentUserId;
@@ -36,4 +36,4 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.json({ weekStart: latest.weekStart, tracks });
-}
+});

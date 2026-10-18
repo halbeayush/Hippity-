@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCurrentUserId } from "@/lib/currentUser";
+import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import { lastfmFetch } from "@/lib/lastfm";
 import {
   collectAlbumsForArtists,
@@ -16,7 +16,7 @@ const TOP_ARTIST_COUNT_REFRESH = 30;
 
 // GET /api/recommended/genre?tag=...[&exclude=mbid,mbid,...] — finds top
 // artists for a Last.fm tag (genre) and surfaces their top albums.
-export async function GET(request: NextRequest) {
+export const GET = withSignIn(async (request: NextRequest) => {
   const tag = request.nextUrl.searchParams.get("tag")?.trim();
   const excludeMbids = new Set(
     (request.nextUrl.searchParams.get("exclude") ?? "")
@@ -29,9 +29,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "tag is required" }, { status: 400 });
   }
 
-  try {
-    const userId = await getCurrentUserId();
+  // Outside the try, so a signed-out request gets withSignIn's 401 rather
+  // than this route's 502.
+  const userId = await getCurrentUserId();
 
+  try {
     const albums = await getCachedRecommendations(
       `genre:${userId}:${tag.toLowerCase()}`,
       async () => {
@@ -71,4 +73,4 @@ export async function GET(request: NextRequest) {
       { status: 502 },
     );
   }
-}
+});

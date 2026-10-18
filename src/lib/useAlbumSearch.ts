@@ -8,6 +8,7 @@ import {
   type ArtistFilter,
 } from "./searchRelevance";
 import type { SearchResult } from "./types";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 const DEBOUNCE_MS = 400;
 
@@ -21,8 +22,8 @@ async function fetchResults(
   url: string,
   signal: AbortSignal,
 ): Promise<SearchResponse> {
-  const res = await fetch(url, { signal });
-  const data = await res.json();
+  const res = await apiFetch(url, { signal });
+  const data = await readJson(res);
   if (!res.ok || data.error) throw new Error(data.error ?? "Search failed");
   return { results: data.results ?? [], artistFilters: data.artistFilters ?? [] };
 }

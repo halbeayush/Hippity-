@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { HomeAlbum, SearchResult } from "@/lib/types";
 import AlbumDetailModal from "./AlbumDetailModal";
 import CoverImage, { COVER_LOADING_CLASS } from "./CoverImage";
+import { apiFetch, readJson } from "@/lib/apiFetch";
 
 type SaveStatus = "queue" | "library";
 
@@ -94,9 +95,9 @@ export default function HomeCarousel({
     setLoading(true);
     setError(false);
 
-    fetch(`${apiPath}?page=${page}`, { signal: controller.signal })
+    apiFetch(`${apiPath}?page=${page}`, { signal: controller.signal })
       .then(async (res) => {
-        const data = await res.json();
+        const data = await readJson(res);
         if (!res.ok || data.error) throw new Error(data.error);
         setAlbums(data.albums ?? []);
         setHasMore(Boolean(data.hasMore));
