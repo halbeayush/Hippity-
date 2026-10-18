@@ -63,10 +63,14 @@ function cachePaths(src: string) {
 // On Vercel the disk cache above is per instance and wiped on every deploy,
 // and the CDN only keeps a cover in the regions that have asked for it — so
 // a cover's first viewer after a deploy, or in a new region, waited 1-3 s
-// on Cover Art Archive/Last.fm all over again. With a Blob store connected
-// (BLOB_READ_WRITE_TOKEN set), each cover is kept there once, for every
-// instance and deploy. Without one (local dev), the disk cache is used.
-const USE_BLOB = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+// on Cover Art Archive/Last.fm all over again. With a Blob store connected,
+// each cover is kept there once, for every instance and deploy. Without
+// one (local dev), the disk cache is used. Vercel connects stores through
+// OIDC (it sets BLOB_STORE_ID and @vercel/blob signs requests with the
+// deployment's own OIDC token); a read-write token works too.
+const USE_BLOB = Boolean(
+  process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN,
+);
 
 function blobPathFor(src: string): string {
   return `cover-art/${cacheKeyFor(src)}`;
