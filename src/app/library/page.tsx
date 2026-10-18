@@ -41,6 +41,8 @@ export default function LibraryPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6">
+      <TopNav />
+
       <header className="mb-6 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
           {loading
@@ -71,8 +73,6 @@ export default function LibraryPage() {
           </button>
         </div>
       </header>
-
-      <TopNav />
 
       {loading ? (
         <p className="py-16 text-center text-sm text-zinc-400">Loading...</p>

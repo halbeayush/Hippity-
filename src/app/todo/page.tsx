@@ -22,6 +22,8 @@ export default function TodoPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6">
+      <TopNav />
+
       <header className="mb-6 flex items-center justify-end">
         <button
           type="button"
@@ -31,8 +33,6 @@ export default function TodoPage() {
           + Add album
         </button>
       </header>
-
-      <TopNav />
 
       {loading ? (
         <p className="py-16 text-center text-sm text-zinc-400">Loading...</p>
