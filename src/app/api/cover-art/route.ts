@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
+import { get, put } from "@vercel/blob";
 import { after, NextRequest, NextResponse } from "next/server";
 import { findITunesArtworkSource } from "@/lib/itunes";
 import { getAlbumInfo } from "@/lib/lastfm";
@@ -59,10 +60,38 @@ function cachePaths(src: string) {
   };
 }
 
+// On Vercel the disk cache above is per instance and wiped on every deploy,
+// and the CDN only keeps a cover in the regions that have asked for it — so
+// a cover's first viewer after a deploy, or in a new region, waited 1-3 s
+// on Cover Art Archive/Last.fm all over again. With a Blob store connected
+// (BLOB_READ_WRITE_TOKEN set), each cover is kept there once, for every
+// instance and deploy. Without one (local dev), the disk cache is used.
+const USE_BLOB = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+
+function blobPathFor(src: string): string {
+  return `cover-art/${cacheKeyFor(src)}`;
+}
+
+async function readFromBlob(src: string): Promise<{
+  data: Buffer;
+  contentType: string;
+} | null> {
+  try {
+    const result = await get(blobPathFor(src), { access: "private" });
+    if (!result || result.statusCode !== 200) return null;
+    const data = Buffer.from(await new Response(result.stream).arrayBuffer());
+    return { data, contentType: result.blob.contentType };
+  } catch (err) {
+    console.error("cover-art blob read failed", err);
+    return null;
+  }
+}
+
 async function readFromCache(src: string): Promise<{
   data: Buffer;
   contentType: string;
 } | null> {
+  if (USE_BLOB) return readFromBlob(src);
   const { dataPath, metaPath } = cachePaths(src);
   try {
     const [data, metaRaw] = await Promise.all([
@@ -81,6 +110,19 @@ async function writeToCache(
   data: Buffer,
   contentType: string,
 ): Promise<void> {
+  if (USE_BLOB) {
+    // Saved after the response is sent, so storing a cover never slows down
+    // the request that fetched it. Best effort, like the disk cache.
+    after(() =>
+      put(blobPathFor(src), data, {
+        access: "private",
+        contentType,
+        addRandomSuffix: false,
+        allowOverwrite: true,
+      }).catch((err) => console.error("cover-art blob write failed", err)),
+    );
+    return;
+  }
   const { dataPath, metaPath } = cachePaths(src);
   try {
     await mkdir(CACHE_DIR, { recursive: true });
