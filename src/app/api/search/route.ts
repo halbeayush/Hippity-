@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getArtistCatalog,
+  isSingle,
   isSingleOrEp,
   itunesArtworkProxyUrl,
   lazyArtworkUrl,
@@ -10,6 +11,7 @@ import {
 } from "@/lib/itunes";
 import {
   attachPlaycounts,
+  getAlbumInfo,
   lastfmAlbumId,
   searchPopularAlbums,
 } from "@/lib/lastfm";
@@ -24,6 +26,7 @@ import {
   titleKey,
   type ArtistFilter,
 } from "@/lib/searchRelevance";
+import { isSingleRelease } from "@/lib/releaseType";
 import type { SearchResult } from "@/lib/types";
 
 // A wider raw fetch than what's shown (see RESULT_LIMIT below the sort) so
@@ -54,7 +57,9 @@ export async function GET(request: NextRequest) {
     searchPopularAlbums(query, POPULAR_ALBUM_LIMIT),
   ]);
 
-  const mostRelevant: SearchResult[] = [...albums]
+  // Albums and EPs only — singles are left out (see releaseType.ts).
+  const mostRelevant: SearchResult[] = albums
+    .filter((a) => !isSingle(a))
     .sort(
       (a, b) =>
         relevanceScore(query, b.title, b.artist, b.trackCount) -
@@ -109,11 +114,9 @@ export async function GET(request: NextRequest) {
   // Filtered after attaching play counts, since applyArtistFilter weighs
   // them. Then match quality, most-played first, one copy per album — see
   // rankSearchResults.
-  const pool = await attachPlaycounts([
-    ...mostRelevant,
-    ...catalogMissing,
-    ...popularMissing,
-  ]);
+  const pool = await withoutSingles(
+    await attachPlaycounts([...mostRelevant, ...catalogMissing, ...popularMissing]),
+  );
   let results = rankSearchResults(
     applyArtistFilter(pool, artistFilters, query),
     query,
@@ -140,6 +143,25 @@ export async function GET(request: NextRequest) {
   // The filters go back to the client too, which applies them to the
   // MusicBrainz results it merges in (see useAlbumSearch).
   return NextResponse.json({ results, artistFilters });
+}
+
+// Last.fm's popular matches carry no track count, so theirs comes from the
+// same album.getinfo lookup attachPlaycounts just made (cached, so no
+// second request). One Last.fm has no track list for at all is dropped
+// too: a genuinely popular album nearly always has one, and in practice
+// the ones without are odd duplicate entries, e.g. "Not Like Us" filed
+// under Kendrick Lamar's Japanese name. iTunes results already went
+// through isSingle.
+async function withoutSingles<T extends SearchResult>(results: T[]): Promise<T[]> {
+  const keep = await Promise.all(
+    results.map(async (r) => {
+      if (r.trackCount !== undefined) return !isSingleRelease(r.title, r.trackCount);
+      const { trackCount } = await getAlbumInfo(r.artist, r.title);
+      if (r.mbid.startsWith("lastfm:") && trackCount === 0) return false;
+      return !isSingleRelease(r.title, trackCount);
+    }),
+  );
+  return results.filter((_, i) => keep[i]);
 }
 
 function catalogFilter(

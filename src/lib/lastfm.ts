@@ -101,10 +101,15 @@ export function lastfmCoverUrl(images: LastfmImage[] | undefined): string | null
 export async function getAlbumInfo(
   artist: string,
   album: string,
-): Promise<{ playcount: number; imageUrl: string | null }> {
+): Promise<{ playcount: number; imageUrl: string | null; trackCount: number }> {
   try {
     const data = await lastfmFetch<{
-      album?: { playcount?: string | number; image?: LastfmImage[] };
+      album?: {
+        playcount?: string | number;
+        image?: LastfmImage[];
+        // A one-track album comes back as a single object, not an array.
+        tracks?: { track?: unknown[] | object };
+      };
     }>(
       "album.getinfo",
       // iTunes titles carry store-listing suffixes ("... (Deluxe Version)",
@@ -112,12 +117,15 @@ export async function getAlbumInfo(
       // misses — or lands on a little-played edition instead of the album.
       { artist, album: baseAlbumTitle(album), autocorrect: "1" },
     );
+    const tracks = data.album?.tracks?.track;
     return {
       playcount: Number(data.album?.playcount ?? 0) || 0,
       imageUrl: lastfmCoverUrl(data.album?.image),
+      // 0 when Last.fm has no track list — unknown, not "empty".
+      trackCount: Array.isArray(tracks) ? tracks.length : tracks ? 1 : 0,
     };
   } catch {
-    return { playcount: 0, imageUrl: null };
+    return { playcount: 0, imageUrl: null, trackCount: 0 };
   }
 }
 

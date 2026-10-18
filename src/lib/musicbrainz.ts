@@ -300,24 +300,25 @@ export async function findArtistStudioAlbums(
   return searchReleaseGroups(query, limit);
 }
 
-// An artist's own singles/EPs (own primary release, not a feature).
-export async function findArtistSinglesAndEps(
+// An artist's own EPs (own primary release, not a feature). Singles are
+// left out of every album list (see releaseType.ts).
+export async function findArtistEps(
   artist: string,
   limit = 25,
 ): Promise<{ id: string; title: string }[]> {
-  const query = `artist:"${escapeLucene(artist)}" AND (primarytype:single OR primarytype:ep) AND NOT secondarytype:*`;
+  const query = `artist:"${escapeLucene(artist)}" AND primarytype:ep AND NOT secondarytype:*`;
   return searchReleaseGroups(query, limit);
 }
 
-// Singles/EPs primarily credited to another artist where this artist
+// EPs primarily credited to another artist where this artist
 // appears as a featured guest — explicitly excludes full albums where they
 // only guest on one track, and excludes results where this artist is
-// actually the lead (those are covered by findArtistSinglesAndEps above).
-export async function findFeaturedSingles(
+// actually the lead (those are covered by findArtistEps above).
+export async function findFeaturedEps(
   artist: string,
   limit = 25,
 ): Promise<{ id: string; title: string; leadArtist: string }[]> {
-  const query = `artist:"${escapeLucene(artist)}" AND (primarytype:single OR primarytype:ep)`;
+  const query = `artist:"${escapeLucene(artist)}" AND primarytype:ep`;
   const hits = await searchReleaseGroups(query, limit);
   const lowerArtist = artist.toLowerCase();
 

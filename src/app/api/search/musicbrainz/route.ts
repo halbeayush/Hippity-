@@ -16,6 +16,8 @@ type MusicBrainzReleaseGroup = {
   id: string;
   title: string;
   "first-release-date"?: string;
+  // "Album", "Single", "EP", "Broadcast" or "Other".
+  "primary-type"?: string;
   "artist-credit"?: MusicBrainzArtistCredit[];
 };
 
@@ -56,7 +58,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const mostRelevant: SearchResult[] = [...(data["release-groups"] ?? [])]
+    // Albums and EPs only — singles are left out (see releaseType.ts).
+    const mostRelevant: SearchResult[] = (data["release-groups"] ?? [])
+      .filter((releaseGroup) => releaseGroup["primary-type"] !== "Single")
       .map((releaseGroup) => {
         const artist =
           releaseGroup["artist-credit"]

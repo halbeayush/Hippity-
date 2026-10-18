@@ -1,5 +1,6 @@
 import { lazyArtworkUrl } from "./itunes";
-import { lastfmAlbumId, lastfmCoverUrl, lastfmFetch } from "./lastfm";
+import { getAlbumInfo, lastfmAlbumId, lastfmCoverUrl, lastfmFetch } from "./lastfm";
+import { isSingleRelease } from "./releaseType";
 import { prisma } from "./prisma";
 import { baseAlbumTitle, dedupeKey } from "./searchRelevance";
 import type { AlbumSummary } from "./types";
@@ -10,7 +11,7 @@ import type { AlbumSummary } from "./types";
 // Only one album per artist is shown (see collectAlbumsForArtists) — the
 // rest are fallbacks for when the top one is already saved or was just
 // shown.
-const ALBUMS_PER_ARTIST = 3;
+const ALBUMS_PER_ARTIST = 6;
 const DEFAULT_POOL_SIZE = 18;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -159,14 +160,28 @@ export async function collectAlbumsForArtists(
   // a different album from the same artist rather than only reshuffling.
   // Their next-best albums stay as fallbacks in case everything else is
   // saved or was just shown.
-  const ranked: AlbumSummary[] = [];
-  for (const albums of perArtistAlbums) {
-    const unsaved = albums.filter(
-      (a) => !savedMbids.has(savedAlbumKey(a.artist, a.title)),
-    );
-    const pick = unsaved.find((a) => !excludeMbids.has(a.mbid)) ?? unsaved[0];
-    if (pick) ranked.push(pick);
-  }
+  //
+  // Last.fm's "top albums" include hit singles, and it doesn't label release
+  // types, so each candidate's track count (album.getinfo) decides — checked
+  // only until a pick is found, and cached. Singles are left out of every
+  // album list (see releaseType.ts).
+  const picks = await Promise.all(
+    perArtistAlbums.map(async (albums) => {
+      const unsaved = albums.filter(
+        (a) => !savedMbids.has(savedAlbumKey(a.artist, a.title)),
+      );
+      const ordered = [
+        ...unsaved.filter((a) => !excludeMbids.has(a.mbid)),
+        ...unsaved.filter((a) => excludeMbids.has(a.mbid)),
+      ];
+      for (const album of ordered) {
+        const { trackCount } = await getAlbumInfo(album.artist, album.title);
+        if (!isSingleRelease(album.title, trackCount)) return album;
+      }
+      return null;
+    }),
+  );
+  const ranked = picks.filter((a): a is AlbumSummary => a !== null);
 
   return preferFresh(ranked, (a) => a.mbid, poolSize, excludeMbids);
 }

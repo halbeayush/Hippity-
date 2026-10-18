@@ -4,6 +4,7 @@ import {
   PRIORITY_BACKGROUND,
   PRIORITY_INTERACTIVE,
 } from "./pacedQueue";
+import { isSingleRelease } from "./releaseType";
 import { albumVariantKey, baseAlbumTitle, creditKey } from "./searchRelevance";
 
 const ITUNES_SEARCH_URL = "https://itunes.apple.com/search";
@@ -168,6 +169,11 @@ export function oneEditionPerAlbum(albums: ITunesAlbum[]): ITunesAlbum[] {
 const MIN_ALBUM_TRACKS = 4;
 export function isSingleOrEp(album: ITunesAlbum): boolean {
   return / - (Single|EP)$/i.test(album.title) || album.trackCount < MIN_ALBUM_TRACKS;
+}
+
+// Singles only — EPs stay (see releaseType.ts).
+export function isSingle(album: ITunesAlbum): boolean {
+  return isSingleRelease(album.title, album.trackCount);
 }
 
 // The iTunes artist id for an artist name, from an album search for it —

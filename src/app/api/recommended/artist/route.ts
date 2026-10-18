@@ -3,6 +3,7 @@ import { getCurrentUserId, withSignIn } from "@/lib/currentUser";
 import {
   findITunesArtistId,
   getArtistCatalog,
+  isSingle,
   isSingleOrEp,
   itunesArtworkProxyUrl,
   lazyArtworkUrl,
@@ -12,9 +13,9 @@ import {
 import { attachPlaycounts } from "@/lib/lastfm";
 import {
   coverArtArchiveSrc,
-  findArtistSinglesAndEps,
+  findArtistEps,
   findArtistStudioAlbums,
-  findFeaturedSingles,
+  findFeaturedEps,
 } from "@/lib/musicbrainz";
 import {
   getCachedRecommendations,
@@ -31,9 +32,10 @@ const FETCH_LIMIT_REFRESH = 36;
 
 // GET /api/recommended/artist?artist=...[&exclude=mbid,mbid,...] — surfaces
 // the chosen artist's own catalog, not already in the library/to-do list,
-// in three tiers: their own albums first, then their own singles/EPs, then
-// other artists' singles/EPs where this artist appears as a featured guest.
-// Lower tiers only fill in once the higher tier runs out.
+// in three tiers: their own albums first, then their own EPs, then
+// other artists' EPs where this artist appears as a featured guest.
+// Lower tiers only fill in once the higher tier runs out. Singles are left
+// out entirely (see releaseType.ts).
 export const GET = withSignIn(async (request: NextRequest) => {
   const artist = request.nextUrl.searchParams.get("artist")?.trim();
   const excludeMbids = new Set(
@@ -111,10 +113,12 @@ async function officialCatalogTiers(
   const own = catalog.filter((a) => a.artistId === artistId);
   const tiers = [
     own.filter((a) => !isSingleOrEp(a)),
-    own.filter(isSingleOrEp),
-    // Only others' singles/EPs — not full albums where they guest on one
+    own.filter((a) => isSingleOrEp(a) && !isSingle(a)),
+    // Only others' EPs — not full albums where they guest on one
     // track.
-    catalog.filter((a) => a.artistId !== artistId && isSingleOrEp(a)),
+    catalog.filter(
+      (a) => a.artistId !== artistId && isSingleOrEp(a) && !isSingle(a),
+    ),
   ];
 
   const ranked: AlbumSummary[] = [];
@@ -149,10 +153,10 @@ async function musicBrainzTiers(
   fetchLimit: number,
   savedMbids: Set<string>,
 ): Promise<AlbumSummary[]> {
-  const [studioAlbums, ownSinglesEps, featuredSingles] = await Promise.all([
+  const [studioAlbums, ownEps, featuredEps] = await Promise.all([
     findArtistStudioAlbums(artist, fetchLimit),
-    findArtistSinglesAndEps(artist, fetchLimit),
-    findFeaturedSingles(artist, fetchLimit),
+    findArtistEps(artist, fetchLimit),
+    findFeaturedEps(artist, fetchLimit),
   ]);
 
   const seen = new Set<string>();
@@ -179,7 +183,7 @@ async function musicBrainzTiers(
   }
 
   addAll(studioAlbums, () => artist);
-  addAll(ownSinglesEps, () => artist);
-  addAll(featuredSingles, (hit) => hit.leadArtist ?? artist);
+  addAll(ownEps, () => artist);
+  addAll(featuredEps, (hit) => hit.leadArtist ?? artist);
   return ranked;
 }
